@@ -1,0 +1,61 @@
+name: .NET SDK
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        # 8 is the floor the packages target; 10 guards against drift on a
+        # newer SDK. Both build netstandard2.0 as well.
+        dotnet: ["8.0.x", "10.0.x"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ matrix.dotnet }}
+      - run: dotnet restore
+      - run: dotnet build -c Release --no-restore
+      - run: dotnet test -c Release --no-build
+      - run: dotnet pack -c Release --no-build -o artifacts
+      # The compatibility floor has to be real, not only declared. Java checks
+      # its bytecode version here; the .NET equivalent is that both target
+      # frameworks actually shipped.
+      - name: both target frameworks are in the package
+        run: |
+          contents=$(unzip -l artifacts/Fingerly.Server.0.1.0.nupkg)
+          echo "$contents" | grep -q 'lib/net8.0/Fingerly.Server.dll'
+          echo "$contents" | grep -q 'lib/netstandard2.0/Fingerly.Server.dll'
+      # System.Text.Json is the only runtime dependency the core is allowed to
+      # have, and only on the framework that lacks it.
+      - name: no unexpected runtime dependencies
+        run: |
+          unzip -p artifacts/Fingerly.Server.0.1.0.nupkg '*.nuspec' > core.nuspec
+          declared=$(grep -c '<dependency ' core.nuspec || true)
+          if [ "$declared" != "1" ]; then
+            echo "the core package declares $declared dependencies:"; cat core.nuspec; exit 1
+          fi
+          grep -q '<dependency id="System.Text.Json"' core.nuspec
+          # An empty group is emitted self-closed; net8.0 already has it.
+          grep -q '<group targetFramework="net8.0" />' core.nuspec
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dotnet-sdk-${{ matrix.dotnet }}
+          path: artifacts/*.nupkg
+
+  trim:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+      # The packages declare themselves trimmable and AOT-safe. Publishing a
+      # consumer with full trimming turns any reflection-based JSON binding
+      # into an IL2xxx warning, and warnings are errors, so a fallback off the
+      # source generator fails here rather than in a customer's build.
+      - run: dotnet publish tools/TrimCheck -c Release -r linux-x64 -o trimmed
+      - run: ./trimmed/TrimCheck

@@ -1,0 +1,28 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Proof that the claim on the package holds. Publishing this trimmed turns
+    every reflection-based binding into an IL2xxx warning, and warnings are
+    errors, so a JSON call that fell back off the source generator fails here
+    rather than in a customer's publish output.
+
+      dotnet publish tools/TrimCheck -c Release -r <rid>
+  -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <RollForward>LatestMajor</RollForward>
+    <IsPackable>false</IsPackable>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <PublishTrimmed>true</PublishTrimmed>
+    <TrimMode>full</TrimMode>
+    <SelfContained>true</SelfContained>
+    <SuppressTrimAnalysisWarnings>false</SuppressTrimAnalysisWarnings>
+    <TrimmerSingleWarn>false</TrimmerSingleWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../src/Fingerly.Server/Fingerly.Server.csproj" />
+  </ItemGroup>
+
+</Project>
