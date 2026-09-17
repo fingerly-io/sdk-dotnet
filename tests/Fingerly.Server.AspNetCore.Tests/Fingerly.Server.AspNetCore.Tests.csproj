@@ -22,6 +22,11 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- One fake upstream API, shared with the core suite rather than copied. -->
+    <Compile Include="../Fingerly.Server.Tests/TestApi.cs" Link="TestApi.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
     <!--
       The tests drive a real Kestrel server rather than a hand-written double,
       because a double shares the SDK's assumptions and cannot disprove them.
