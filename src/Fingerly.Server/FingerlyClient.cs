@@ -1,0 +1,315 @@
+using System;
+using System.Net;
+using System.Net.Http;
+using System.Text.Json;
+using System.Threading;
+using System.Threading.Tasks;
+
+namespace Fingerly;
+
+/// <summary>
+/// The Fingerly server SDK.
+/// </summary>
+/// <remarks>
+/// <para>
+/// Build one and reuse it: it holds a pooled connection and is safe for
+/// concurrent use. Secret keys and webhook secrets belong in server-side code
+/// only; a browser must never see either.
+/// </para>
+/// <code>
+/// var fingerly = new FingerlyClient(Environment.GetEnvironmentVariable("FINGERLY_SECRET_KEY"));
+/// Event ev = await fingerly.Events.GetAsync(requestId);
+/// </code>
+/// <para>
+/// In an ASP.NET Core application, prefer <c>services.AddFingerly(...)</c>
+/// from <c>Fingerly.Server.AspNetCore</c>: it registers the client through
+/// <c>IHttpClientFactory</c>, which recycles connections rather than pinning
+/// stale DNS to a process-lifetime handler.
+/// </para>
+/// </remarks>
+public sealed class FingerlyClient : IDisposable
+{
+    /// <summary>The SDK version, reported to the API on every request.</summary>
+    public const string Version = "0.1.0";
+
+    private const string UserAgentValue = "fingerly-dotnet/" + Version;
+
+    /// <summary>An error body is small; anything larger is not one worth reading.</summary>
+    private const int MaxErrorBody = 1 << 20;
+
+    /// <summary>A bound on a response we buffer, for a client we own.</summary>
+    private const int MaxResponseBytes = 16 << 20;
+
+    private readonly string _secretKey;
+    private readonly Uri _baseUri;
+    private readonly TimeSpan _timeout;
+    private readonly HttpClient _httpClient;
+    private readonly bool _ownsHttpClient;
+
+#if NET
+    private const DecompressionMethods Decompression = DecompressionMethods.All;
+#else
+    private const DecompressionMethods Decompression =
+        DecompressionMethods.GZip | DecompressionMethods.Deflate;
+#endif
+
+    /// <summary>
+    /// Creates a client for a secret key, with every other setting defaulted.
+    /// </summary>
+    /// <param name="secretKey">A <c>fly_sk_…</c> key.</param>
+    /// <exception cref="ArgumentException">The key is malformed or of another kind.</exception>
+    public FingerlyClient(string secretKey)
+        : this(new FingerlyOptions { SecretKey = secretKey })
+    {
+    }
+
+    /// <summary>
+    /// Creates a client from settings, owning the connection it opens.
+    /// </summary>
+    /// <param name="options">The settings; <see cref="FingerlyOptions.SecretKey"/> is required.</param>
+    /// <exception cref="ArgumentNullException"><paramref name="options"/> is null.</exception>
+    /// <exception cref="ArgumentException">A key, endpoint or version is invalid.</exception>
+    /// <exception cref="ArgumentOutOfRangeException">The timeout is not positive.</exception>
+    public FingerlyClient(FingerlyOptions options)
+        : this(options, null, owned: true)
+    {
+    }
+
+    /// <summary>
+    /// Creates a client over a caller-supplied <see cref="HttpClient"/>.
+    /// </summary>
+    /// <param name="options">The settings; <see cref="FingerlyOptions.SecretKey"/> is required.</param>
+    /// <param name="httpClient">
+    /// The client to send with, typically one from <c>IHttpClientFactory</c>.
+    /// It is not disposed with this instance, and its
+    /// <see cref="HttpClient.Timeout"/> is left alone:
+    /// <see cref="FingerlyOptions.Timeout"/> is applied per request instead.
+    /// Configure its handler with <c>AllowAutoRedirect = false</c>.
+    /// </param>
+    /// <exception cref="ArgumentNullException">An argument is null.</exception>
+    /// <exception cref="ArgumentException">A key, endpoint or version is invalid.</exception>
+    public FingerlyClient(FingerlyOptions options, HttpClient httpClient)
+        : this(options, httpClient ?? throw new ArgumentNullException(nameof(httpClient)), owned: false)
+    {
+    }
+
+    private FingerlyClient(FingerlyOptions? options, HttpClient? httpClient, bool owned)
+    {
+        if (options is null)
+        {
+            throw new ArgumentNullException(nameof(options));
+        }
+        if (!owned && options.Handler is not null)
+        {
+            // Silently ignoring one of two transports is how a caller ends up
+            // sure that redirects are disabled when they are not.
+            throw new ArgumentException(
+                "Supply either a HttpClient or FingerlyOptions.Handler, not both",
+                nameof(options));
+        }
+
+        // Validate the key even when an endpoint is given, so a public, proxy
+        // or management key can never reach an API that would accept it.
+        Keys.Scope scope = Keys.Parse(
+            options.SecretKey, Keys.Secret, nameof(FingerlyOptions.SecretKey));
+        string origin = Keys.Origin(
+            options.Endpoint ?? scope.Origin, nameof(FingerlyOptions.Endpoint));
+        string apiVersion = Keys.ApiVersion(
+            options.ApiVersion, nameof(FingerlyOptions.ApiVersion));
+
+        _secretKey = options.SecretKey;
+        _baseUri = new Uri(origin + "/api/" + apiVersion + "/", UriKind.Absolute);
+        _timeout = Keys.Positive(options.Timeout, nameof(FingerlyOptions.Timeout));
+        _ownsHttpClient = owned;
+        _httpClient = httpClient ?? CreateHttpClient(options.Handler);
+        Events = new EventsService(this);
+    }
+
+    /// <summary>Event reads under this client's secret key.</summary>
+    public EventsService Events { get; }
+
+    /// <summary>
+    /// Releases the connection, when this instance opened one.
+    /// </summary>
+    /// <remarks>
+    /// A client passed in through the constructor belongs to its owner and is
+    /// left alone.
+    /// </remarks>
+    public void Dispose()
+    {
+        if (_ownsHttpClient)
+        {
+            _httpClient.Dispose();
+        }
+    }
+
+    /// <summary>
+    /// Builds the client this instance owns.
+    /// </summary>
+    /// <remarks>
+    /// Redirects are never followed, so an authenticated request cannot be
+    /// replayed to another host. Compressed responses are decoded here rather
+    /// than left to the caller, because .NET asks for none and decodes none
+    /// unless told to. On .NET the connections are recycled every two minutes
+    /// as well, because a handler kept for the life of the process otherwise
+    /// pins whatever DNS answered first.
+    /// </remarks>
+    private static HttpClient CreateHttpClient(HttpMessageHandler? handler)
+    {
+        bool supplied = handler is not null;
+#if NET
+        handler ??= new SocketsHttpHandler
+        {
+            AllowAutoRedirect = false,
+            AutomaticDecompression = Decompression,
+            PooledConnectionLifetime = TimeSpan.FromMinutes(2),
+        };
+#else
+        handler ??= new HttpClientHandler
+        {
+            AllowAutoRedirect = false,
+            AutomaticDecompression = Decompression,
+        };
+#endif
+        // A handler the caller supplied belongs to the caller.
+        return new HttpClient(handler, disposeHandler: !supplied)
+        {
+            MaxResponseContentBufferSize = MaxResponseBytes,
+        };
+    }
+
+    /// <summary>
+    /// Performs one authenticated GET and returns the body.
+    /// </summary>
+    /// <remarks>
+    /// Never retries. The deadline covers receiving the body, because the
+    /// response is sent with <see cref="HttpCompletionOption.ResponseContentRead"/>
+    /// and the linked token governs that read as well as the request.
+    /// </remarks>
+    internal async Task<byte[]> GetAsync(string path, CancellationToken cancellationToken)
+    {
+        var uri = new Uri(_baseUri, path);
+        using var request = new HttpRequestMessage(HttpMethod.Get, uri);
+        request.Headers.TryAddWithoutValidation("X-API-Key", _secretKey);
+        request.Headers.TryAddWithoutValidation("Accept", "application/json");
+        request.Headers.TryAddWithoutValidation("User-Agent", UserAgentValue);
+
+        using CancellationTokenSource deadline =
+            CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        deadline.CancelAfter(_timeout);
+
+        HttpResponseMessage response;
+        try
+        {
+            response = await _httpClient
+                .SendAsync(request, HttpCompletionOption.ResponseContentRead, deadline.Token)
+                .ConfigureAwait(false);
+        }
+        catch (OperationCanceledException cause) when (!cancellationToken.IsCancellationRequested)
+        {
+            // Either our deadline or the HttpClient's own timeout. A token the
+            // caller cancelled falls through as OperationCanceledException,
+            // which is what a caller who cancelled expects to catch.
+            throw new FingerlyTimeoutException("The Fingerly request timed out", cause);
+        }
+        catch (HttpRequestException cause)
+        {
+            throw new FingerlyConnectionException(
+                "Could not reach the Fingerly API", Redact(cause));
+        }
+
+        using (response)
+        {
+            // A handler the caller configured may still follow redirects. The
+            // key has already left the process by then, so this cannot undo
+            // the leak; refusing the answer at least stops another host's
+            // response being read as Fingerly's.
+            Uri? answered = response.RequestMessage?.RequestUri;
+            if (answered is not null && answered != uri)
+            {
+                throw new FingerlyException(
+                    "The Fingerly request was redirected to another URL. Configure the "
+                    + "handler with AllowAutoRedirect = false.");
+            }
+
+            byte[] body = await ReadBodyAsync(response, cancellationToken).ConfigureAwait(false);
+            if ((int)response.StatusCode < 200 || (int)response.StatusCode > 299)
+            {
+                throw ApiError((int)response.StatusCode, body);
+            }
+            return body;
+        }
+    }
+
+    private static async Task<byte[]> ReadBodyAsync(
+        HttpResponseMessage response, CancellationToken cancellationToken)
+    {
+        try
+        {
+#if NET
+            return await response.Content.ReadAsByteArrayAsync(cancellationToken)
+                .ConfigureAwait(false);
+#else
+            return await response.Content.ReadAsByteArrayAsync().ConfigureAwait(false);
+#endif
+        }
+        catch (HttpRequestException cause)
+        {
+            throw new FingerlyConnectionException("Could not read the Fingerly response", cause);
+        }
+    }
+
+    /// <summary>
+    /// Maps a failed response to a redacted <see cref="FingerlyApiException"/>.
+    /// </summary>
+    /// <remarks>
+    /// Only the status and the structured fields the API documents are
+    /// surfaced. The raw body is deliberately dropped rather than echoed.
+    /// </remarks>
+    private FingerlyApiException ApiError(int status, byte[] body)
+    {
+        if (body.Length == 0 || body.Length > MaxErrorBody)
+        {
+            return new FingerlyApiException(status, null, null, null);
+        }
+
+        ApiErrorEnvelope envelope;
+        try
+        {
+            envelope = Json.Read(body, FingerlyJsonContext.Default.ApiErrorEnvelope);
+        }
+        catch (FingerlyException)
+        {
+            // A non-JSON body still reports its HTTP status.
+            return new FingerlyApiException(status, null, null, null);
+        }
+
+        JsonElement? details = null;
+        if (envelope.Error?.Details is JsonElement raw && raw.ValueKind != JsonValueKind.Null)
+        {
+            details = Json.Reparse(Redact(raw.GetRawText()));
+        }
+        return new FingerlyApiException(
+            status, RedactOrNull(envelope.Error?.Code), details, RedactOrNull(envelope.RequestId));
+    }
+
+    /// <summary>Strips the secret key from anything an error may carry to logs.</summary>
+    private string Redact(string value) => value.Replace(_secretKey, "[redacted]");
+
+    /// <summary>The same, for a field the error body may have omitted.</summary>
+    private string? RedactOrNull(string? value) => value is null ? null : Redact(value);
+
+    /// <summary>
+    /// Strips the secret key from a transport failure, whose message can
+    /// include the request URL.
+    /// </summary>
+    private Exception Redact(HttpRequestException cause)
+    {
+        string message = cause.Message;
+        if (!message.Contains(_secretKey))
+        {
+            return cause;
+        }
+        return new HttpRequestException(Redact(message));
+    }
+}
