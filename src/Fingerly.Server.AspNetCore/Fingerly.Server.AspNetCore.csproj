@@ -1,0 +1,31 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!--
+      ASP.NET Core only exists from net6.0, and net8.0 is the supported floor.
+      Applications on net9.0 and net10.0 use these assets and roll the shared
+      framework forward themselves.
+    -->
+    <TargetFramework>net8.0</TargetFramework>
+    <RootNamespace>Fingerly.AspNetCore</RootNamespace>
+    <PackageId>Fingerly.Server.AspNetCore</PackageId>
+    <Description>ASP.NET Core middleware, endpoint routing and dependency injection for the Fingerly server SDK.</Description>
+    <IsTrimmable>true</IsTrimmable>
+    <IsAotCompatible>true</IsAotCompatible>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!--
+      A framework reference, not a package: the application server already
+      carries ASP.NET Core, so nothing here collides with what it has. This is
+      the .NET spelling of Java's "provided".
+    -->
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+    <ProjectReference Include="../Fingerly.Server/Fingerly.Server.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Fingerly.Server.AspNetCore.Tests" />
+  </ItemGroup>
+
+</Project>

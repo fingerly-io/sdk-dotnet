@@ -1,0 +1,36 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!--
+      net8.0 is the supported floor and needs no dependencies: System.Text.Json
+      is in its shared framework. netstandard2.0 keeps the client and webhook
+      verification reachable from .NET Framework 4.6.2 and newer, which is
+      still where a great deal of payment and fraud code runs.
+    -->
+    <TargetFrameworks>netstandard2.0;net8.0</TargetFrameworks>
+    <RootNamespace>Fingerly</RootNamespace>
+    <PackageId>Fingerly.Server</PackageId>
+    <Description>Server-side Fingerly SDK: read stored identification events, verify signed webhooks, and run a same-origin proxy for the browser SDK.</Description>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(TargetFramework)' != 'netstandard2.0'">
+    <!--
+      Trim and AOT analysis run on the modern target. They are what keeps the
+      JSON layer on the source generator: reflection-based serialization would
+      be reported here rather than in a customer's publish output.
+    -->
+    <IsTrimmable>true</IsTrimmable>
+    <IsAotCompatible>true</IsAotCompatible>
+  </PropertyGroup>
+
+  <ItemGroup Condition="'$(TargetFramework)' == 'netstandard2.0'">
+    <PackageReference Include="System.Text.Json" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Fingerly.Server.Tests" />
+    <InternalsVisibleTo Include="Fingerly.Server.AspNetCore" />
+    <InternalsVisibleTo Include="Fingerly.Server.AspNetCore.Tests" />
+  </ItemGroup>
+
+</Project>

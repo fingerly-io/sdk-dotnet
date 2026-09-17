@@ -1,0 +1,36 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <RootNamespace>Fingerly.Tests</RootNamespace>
+    <IsPackable>false</IsPackable>
+    <!-- Run on whatever runtime the machine has, so a newer SDK alone is enough. -->
+    <RollForward>LatestMajor</RollForward>
+    <!-- Tests document themselves by name; XML docs on every fact would not help. -->
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!--
+      Tests read the vendored contract snapshot from the repository root, so
+      they do not depend on the working directory a runner chose.
+    -->
+    <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute">
+      <_Parameter1>Fingerly.ContractDir</_Parameter1>
+      <_Parameter2>$(MSBuildThisFileDirectory)../../contract</_Parameter2>
+    </AssemblyAttribute>
+  </ItemGroup>
+
+  <ItemGroup>
+    <!--
+      The tests drive a real Kestrel server rather than a hand-written double,
+      because a double shares the SDK's assumptions and cannot disprove them.
+    -->
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+    <ProjectReference Include="../../src/Fingerly.Server/Fingerly.Server.csproj" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="xunit" />
+    <PackageReference Include="xunit.runner.visualstudio" />
+  </ItemGroup>
+
+</Project>

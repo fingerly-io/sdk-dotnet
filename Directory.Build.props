@@ -1,0 +1,36 @@
+<Project>
+
+  <!--
+    Shared build settings. The SDK is a library in somebody else's build, so a
+    warning it ships is a warning they cannot fix: warnings are errors here,
+    and XML documentation is generated so CS1591 makes an undocumented public
+    member one of them.
+  -->
+  <PropertyGroup>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <EnableNETAnalyzers>true</EnableNETAnalyzers>
+    <AnalysisLevel>latest</AnalysisLevel>
+    <Deterministic>true</Deterministic>
+    <NoWarn>$(NoWarn);NU5104</NoWarn>
+  </PropertyGroup>
+
+  <!-- Package metadata, identical for every shipped assembly. -->
+  <PropertyGroup>
+    <Version>0.1.0</Version>
+    <Authors>Fingerly</Authors>
+    <Company>Fingerly</Company>
+    <Product>Fingerly server SDK</Product>
+    <PackageProjectUrl>https://docs.fingerly.io/docs/sdks/dotnet</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/fingerly-io/sdk-dotnet</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageTags>fingerly;fraud;device-fingerprinting;bot-detection</PackageTags>
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+    <EmbedUntrackedSources>true</EmbedUntrackedSources>
+  </PropertyGroup>
+
+</Project>
