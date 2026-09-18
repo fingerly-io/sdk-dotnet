@@ -109,20 +109,21 @@ if (!ev.IsScored)
 `Raw` keeps the response body exactly as it arrived, so a field the API adds
 later is reachable without an SDK upgrade.
 
-## Wait for a fresh identification
+## Read an event you just identified
 
-Identification answers before the event is archived, so reach for this only
-when you have just identified a visitor:
+An event is readable as soon as identification answers, so this needs nothing
+special:
 
 ```csharp
-Event ev = await fingerly.Events.WaitForAsync(
-    requestId, TimeSpan.FromSeconds(10), TimeSpan.FromMilliseconds(250), ct);
+Event ev = await fingerly.Events.GetAsync(requestId, ct);
 ```
 
-Only `IsEventNotFound` is retried; every other failure is thrown at once. When
-the event is still missing at the deadline, `FingerlyTimeoutException` keeps
-the last `FingerlyApiException` as its inner exception, so the reason it kept
-waiting is not lost.
+Earlier versions had a `WaitForAsync` that polled through the gap between
+identification and the event becoming queryable. There is no gap, so
+`IsEventNotFound` now means a request id that was never issued.
+
+The archived document arrives moments after the event itself, so check
+`HasDocument` rather than assuming it is there.
 
 ## Verify a backend action
 
@@ -269,7 +270,7 @@ check step. Never put production secrets in fixtures.
 ## Source structure
 
 `FingerlyClient` holds the connection and the options; `EventsService` owns the
-reads and the polling loop, and `Event`, `EventPage` and `EventListOptions` are
+reads and the list filters, and `Event`, `EventPage` and `EventListOptions` are
 what they speak in. `Webhooks` verifies signatures. `FingerlyProxy` holds every
 proxy decision, with `ProxyRequest` and `ProxyResponse` as the neutral shapes
 the hosts translate to. `Keys` validates every caller-supplied option before

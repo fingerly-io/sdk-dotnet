@@ -101,81 +101,57 @@ public class EventsServiceTest
         Assert.Empty(api.Requests);
     }
 
+    /// <summary>
+    /// An event is readable as soon as identification answers, so a missing
+    /// one means a request id that was never issued: reported at once, in one
+    /// request, rather than waited through.
+    /// </summary>
     [Fact]
-    public async Task WaitForReturnsTheEventOnceItIsArchived()
+    public async Task ReportsAMissingEventWithoutRetrying()
     {
-        int seen = 0;
-        await using TestApi api = await TestApi.StartAsync(async context =>
-        {
-            bool archived = Interlocked.Increment(ref seen) >= 3;
-            context.Response.StatusCode = archived ? 200 : 404;
-            context.Response.ContentType = "application/json";
-            await context.Response.WriteAsync(archived ? EventJson : NotFound);
-        });
-        using FingerlyClient fingerly = Client(api);
-
-        Event stored = await fingerly.Events.WaitForAsync(
-            "r1", TimeSpan.FromSeconds(5), TimeSpan.FromMilliseconds(20));
-
-        Assert.Equal("r1", stored.RequestId);
-        Assert.Equal(3, seen);
-    }
-
-    [Fact]
-    public async Task WaitForRetriesOnlyEventNotFound()
-    {
-        await using TestApi api = await TestApi.RespondAsync(
-            403, """{"error":{"code":"forbidden"}}""");
+        await using TestApi api = await TestApi.RespondAsync(404, NotFound);
         using FingerlyClient fingerly = Client(api);
 
         FingerlyApiException failure = await Assert.ThrowsAsync<FingerlyApiException>(
-            () => fingerly.Events.WaitForAsync(
-                "r1", TimeSpan.FromSeconds(5), TimeSpan.FromMilliseconds(20)));
+            () => fingerly.Events.GetAsync("r1"));
 
-        Assert.Equal(403, failure.Status);
+        Assert.Equal(404, failure.Status);
+        Assert.True(failure.IsEventNotFound);
+        Assert.Equal("trace", failure.RequestId);
+        Assert.Single(api.Requests);
+    }
+
+    [Theory]
+    [InlineData(400)]
+    [InlineData(403)]
+    [InlineData(429)]
+    [InlineData(500)]
+    public async Task PropagatesEveryOtherFailure(int status)
+    {
+        await using TestApi api = await TestApi.RespondAsync(
+            status, """{"error":{"code":"other"}}""");
+        using FingerlyClient fingerly = Client(api);
+
+        FingerlyApiException failure = await Assert.ThrowsAsync<FingerlyApiException>(
+            () => fingerly.Events.GetAsync("r1"));
+
+        Assert.Equal(status, failure.Status);
+        Assert.False(failure.IsEventNotFound);
         Assert.Single(api.Requests);
     }
 
     [Fact]
-    public async Task WaitForKeepsTheReasonItKeptWaiting()
+    public async Task StopsWhenTheCallerCancels()
     {
-        await using TestApi api = await TestApi.RespondAsync(404, NotFound);
-        using FingerlyClient fingerly = Client(api);
-
-        FingerlyTimeoutException expired = await Assert.ThrowsAsync<FingerlyTimeoutException>(
-            () => fingerly.Events.WaitForAsync(
-                "r1", TimeSpan.FromMilliseconds(200), TimeSpan.FromMilliseconds(20)));
-
-        FingerlyApiException lastMiss = Assert.IsType<FingerlyApiException>(expired.InnerException);
-        Assert.True(lastMiss.IsEventNotFound);
-        Assert.Contains("r1", expired.Message, StringComparison.Ordinal);
-    }
-
-    [Theory]
-    [InlineData(0, 20)]
-    [InlineData(200, 0)]
-    [InlineData(-1, 20)]
-    public async Task WaitForRefusesANonPositiveBound(int timeoutMs, int intervalMs)
-    {
-        await using TestApi api = await TestApi.RespondAsync(404, NotFound);
-        using FingerlyClient fingerly = Client(api);
-
-        await Assert.ThrowsAsync<ArgumentOutOfRangeException>(
-            () => fingerly.Events.WaitForAsync(
-                "r1", TimeSpan.FromMilliseconds(timeoutMs), TimeSpan.FromMilliseconds(intervalMs)));
-        Assert.Empty(api.Requests);
-    }
-
-    [Fact]
-    public async Task WaitForStopsWhenTheCallerCancels()
-    {
-        await using TestApi api = await TestApi.RespondAsync(404, NotFound);
+        await using TestApi api = await TestApi.StartAsync(async context =>
+        {
+            await Task.Delay(TimeSpan.FromSeconds(30), context.RequestAborted);
+        });
         using FingerlyClient fingerly = Client(api);
         using var caller = new CancellationTokenSource(TimeSpan.FromMilliseconds(150));
 
         await Assert.ThrowsAnyAsync<OperationCanceledException>(
-            () => fingerly.Events.WaitForAsync(
-                "r1", TimeSpan.FromSeconds(30), TimeSpan.FromMilliseconds(20), caller.Token));
+            () => fingerly.Events.GetAsync("r1", caller.Token));
     }
 
     private static FingerlyClient Client(TestApi api) =>
