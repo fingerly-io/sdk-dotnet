@@ -12,8 +12,8 @@ namespace Fingerly.Tests;
 
 public class FingerlyProxyTest
 {
-    private const string ProxyKey = "fly_px_eu_production_proxy";
-    private const string PublicKey = "fly_pk_eu_production_browser";
+    private const string ProxyKey = "fly_px_production_proxy";
+    private const string PublicKey = "fly_pk_production_browser";
     private const string Prefix = "/metrics";
     private const string Identify = Prefix + "/api/v1/identify";
 
@@ -42,15 +42,15 @@ public class FingerlyProxyTest
         Assert.Throws<ArgumentException>(() => new FingerlyProxy(new FingerlyProxyOptions
         {
             ProxyKey = ProxyKey,
-            SecretKey = "fly_sk_eu_production_secret",
+            SecretKey = "fly_sk_production_secret",
             ClientIp = _ => "203.0.113.7",
         }));
 #pragma warning restore CS0618
     }
 
     [Theory]
-    [InlineData("fly_sk_eu_production_secret")]
-    [InlineData("fly_pk_eu_production_browser")]
+    [InlineData("fly_sk_production_secret")]
+    [InlineData("fly_pk_production_browser")]
     [InlineData("nonsense")]
     public void RefusesAKeyThatIsNotAProxyKey(string key)
     {
@@ -186,10 +186,9 @@ public class FingerlyProxyTest
     [Theory]
     [InlineData(null)]
     [InlineData("")]
-    [InlineData("fly_sk_eu_production_secret")]     // a server key from a browser
-    [InlineData("fly_px_eu_production_proxy")]      // the proxy key itself
-    [InlineData("fly_pk_us_production_browser")]    // another region
-    [InlineData("fly_pk_eu_staging_browser")]       // another environment
+    [InlineData("fly_sk_production_secret")]     // a server key from a browser
+    [InlineData("fly_px_production_proxy")]      // the proxy key itself
+    [InlineData("fly_pk_staging_browser")]       // another environment
     [InlineData("nonsense")]
     public async Task RefusesAKeyFromAnotherDeployment(string? presented)
     {
@@ -211,7 +210,7 @@ public class FingerlyProxyTest
 #pragma warning disable CS0618 // The deprecated mode is what is under test.
         using var proxy = new FingerlyProxy(new FingerlyProxyOptions
         {
-            SecretKey = "fly_sk_eu_production_secret",
+            SecretKey = "fly_sk_production_secret",
             Prefix = Prefix,
             Upstream = upstream.Origin,
             ClientIp = _ => "203.0.113.7",
@@ -221,7 +220,7 @@ public class FingerlyProxyTest
         ProxyResponse result = await proxy.HandleAsync(Post(Identify, "{}"));
 
         Assert.Equal(200, result.Status);
-        Assert.Equal("fly_sk_eu_production_secret", upstream.Requests[0].Header("X-API-Key"));
+        Assert.Equal("fly_sk_production_secret", upstream.Requests[0].Header("X-API-Key"));
         Assert.Null(upstream.Requests[0].Header("X-Fingerly-Proxy-Key"));
     }
 

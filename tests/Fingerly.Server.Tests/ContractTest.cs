@@ -18,7 +18,7 @@ namespace Fingerly.Tests;
 /// </remarks>
 public class ContractTest
 {
-    private const string SecretKey = "fly_sk_eu_production_contract";
+    private const string SecretKey = "fly_sk_production_contract";
 
     [Fact]
     public void SnapshotMatchesItsManifest()

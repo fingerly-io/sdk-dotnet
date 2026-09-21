@@ -12,8 +12,8 @@ namespace Fingerly.AspNetCore.Tests;
 
 public class MapFingerlyProxyTest
 {
-    private const string ProxyKey = "fly_px_eu_production_proxy";
-    private const string PublicKey = "fly_pk_eu_production_browser";
+    private const string ProxyKey = "fly_px_production_proxy";
+    private const string PublicKey = "fly_pk_production_browser";
 
     [Fact]
     public async Task MapsIdentifyAndSupplement()

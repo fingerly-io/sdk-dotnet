@@ -107,7 +107,7 @@ public sealed class FingerlyProxy : IDisposable
             _usesProxyKey ? Keys.Proxy : Keys.Secret,
             _usesProxyKey ? nameof(options.ProxyKey) : "SecretKey");
         _upstream = Keys.Origin(
-            options.Upstream ?? _scope.Origin, nameof(options.Upstream));
+            options.Upstream ?? Keys.DefaultEndpoint, nameof(options.Upstream));
         _apiVersion = Keys.ApiVersion(options.ApiVersion, nameof(options.ApiVersion));
         _prefix = NormalizePrefix(options.Prefix, nameof(options.Prefix));
         if (options.MaxBodyBytes <= 0)
@@ -324,7 +324,7 @@ public sealed class FingerlyProxy : IDisposable
     /// </summary>
     /// <remarks>
     /// With a proxy key the browser must supply a public key for the same
-    /// region and environment, which the proxy forwards alongside its own. The
+    /// environment, which the proxy forwards alongside its own. The
     /// deprecated secret-key mode authenticates on its own.
     /// </remarks>
     /// <returns>The key to forward, or null when the caller is unauthorised.</returns>
@@ -338,9 +338,7 @@ public sealed class FingerlyProxy : IDisposable
         {
             return null;
         }
-        bool sameDeployment = browser.Region == _scope.Region
-            && browser.Environment == _scope.Environment;
-        return sameDeployment ? presented : null;
+        return browser.Environment == _scope.Environment ? presented : null;
     }
 
     /// <summary>

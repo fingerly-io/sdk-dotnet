@@ -23,8 +23,8 @@ EventPage page = await fingerly.Events.ListAsync(
     new EventListOptions { Level = "high", Limit = 50 }, cancellationToken);
 ```
 
-Event reads require `fly_sk_{eu|us}_{production|staging|development}_…` keys.
-The key selects the regional endpoint; `Endpoint` overrides it for a local
+Event reads require `fly_sk_{production|staging|development}_…` keys. Requests
+go to `https://api.fingerly.io`; `Endpoint` overrides that for a local
 API. Public, proxy, management, malformed and unsupported keys are rejected
 before network access, by the constructor rather than by the first call.
 Requests do not follow redirects. `GetAsync` and `ListAsync` each perform one
@@ -212,8 +212,8 @@ It forwards only `POST` to `{prefix}/api/v1/identify` and
 any other method gets `405`. Event reads need a secret key and stay unreachable
 from a browser by construction.
 
-The browser must present a public key from the same region and environment as
-the proxy key, or the request gets `401`. Bodies over 1 MiB get `413`, enforced
+The browser must present a public key from the same environment as the proxy
+key, or the request gets `401`. Bodies over 1 MiB get `413`, enforced
 while reading rather than after buffering. Responses are marked `no-store`.
 Only the content type, the visitor metadata Fingerly needs, and an
 `Idempotency-Key` are forwarded; customer cookies and authorization headers

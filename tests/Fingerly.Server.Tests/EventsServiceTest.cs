@@ -8,7 +8,7 @@ namespace Fingerly.Tests;
 
 public class EventsServiceTest
 {
-    private const string SecretKey = "fly_sk_us_staging_abc123";
+    private const string SecretKey = "fly_sk_staging_abc123";
     private const string EventJson =
         """{"request_id":"r1","visitor_id":"v1","occurred_at":"2026-01-02T03:04:05Z","extra":1}""";
     private const string NotFound =

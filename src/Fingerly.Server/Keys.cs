@@ -27,38 +27,34 @@ internal static class Keys
     /// newline.
     /// </remarks>
     private static readonly Regex KeyPattern = new(
-        @"\Afly_(pk|sk|px)_(eu|us)_(production|staging|development)_[A-Za-z0-9_-]+\z",
+        @"\Afly_(pk|sk|px)_(production|staging|development)_[A-Za-z0-9_-]+\z",
         RegexOptions.CultureInvariant);
 
     private static readonly Regex ApiVersionPattern = new(
         @"\Av[1-9][0-9]*\z", RegexOptions.CultureInvariant);
 
-    /// <summary>The region and environment a Fingerly key is scoped to.</summary>
+    /// <summary>The one Fingerly API origin.</summary>
+    internal const string DefaultEndpoint = "https://api.fingerly.io";
+
+    /// <summary>The environment a Fingerly key is scoped to.</summary>
     internal readonly struct Scope
     {
-        internal Scope(string region, string environment)
+        internal Scope(string environment)
         {
-            Region = region;
             Environment = environment;
         }
 
-        /// <summary><c>eu</c> or <c>us</c>; selects the regional API host.</summary>
-        internal string Region { get; }
-
         /// <summary><c>production</c>, <c>staging</c> or <c>development</c>.</summary>
         internal string Environment { get; }
-
-        /// <summary>The Fingerly API origin serving this scope's region.</summary>
-        internal string Origin => "https://" + Region + ".api.fingerly.io";
     }
 
     /// <summary>
     /// Parses a Fingerly key and asserts it is of the expected kind.
     /// </summary>
-    /// <param name="key">The raw key, such as <c>fly_sk_us_production_…</c>.</param>
+    /// <param name="key">The raw key, such as <c>fly_sk_production_…</c>.</param>
     /// <param name="expected">The kind the caller requires.</param>
     /// <param name="paramName">The option the key arrived in.</param>
-    /// <returns>The region and environment the key is scoped to.</returns>
+    /// <returns>The environment the key is scoped to.</returns>
     /// <exception cref="ArgumentException">
     /// The key is malformed or of another kind, so a public, proxy or
     /// management key can never reach an API that would accept it.
@@ -69,9 +65,9 @@ internal static class Keys
         if (!match.Success || match.Groups[1].Value != expected)
         {
             throw new ArgumentException(
-                "A valid regional Fingerly " + Label(expected) + " key is required", paramName);
+                "A valid Fingerly " + Label(expected) + " key is required", paramName);
         }
-        return new Scope(match.Groups[2].Value, match.Groups[3].Value);
+        return new Scope(match.Groups[2].Value);
     }
 
     /// <summary>Reports whether a key is of the expected kind, without throwing.</summary>
@@ -83,7 +79,7 @@ internal static class Keys
             scope = default;
             return false;
         }
-        scope = new Scope(match.Groups[2].Value, match.Groups[3].Value);
+        scope = new Scope(match.Groups[2].Value);
         return true;
     }
 

@@ -13,9 +13,9 @@ namespace Fingerly.AspNetCore.Tests;
 
 public class ServiceCollectionTest
 {
-    private const string SecretKey = "fly_sk_eu_production_abc123";
-    private const string ProxyKey = "fly_px_eu_production_proxy";
-    private const string PublicKey = "fly_pk_eu_production_browser";
+    private const string SecretKey = "fly_sk_production_abc123";
+    private const string ProxyKey = "fly_px_production_proxy";
+    private const string PublicKey = "fly_pk_production_browser";
 
     [Fact]
     public async Task AddFingerlyRegistersAWorkingClient()
@@ -72,7 +72,7 @@ public class ServiceCollectionTest
     public void AddFingerlyReportsABadKeyWhenTheClientIsResolved()
     {
         var services = new ServiceCollection();
-        services.AddFingerly(options => options.SecretKey = "fly_pk_eu_production_browser");
+        services.AddFingerly(options => options.SecretKey = "fly_pk_production_browser");
         using ServiceProvider provider = services.BuildServiceProvider();
 
         Assert.Throws<ArgumentException>(() => provider.GetRequiredService<FingerlyClient>());

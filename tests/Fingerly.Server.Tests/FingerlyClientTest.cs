@@ -10,20 +10,19 @@ namespace Fingerly.Tests;
 
 public class FingerlyClientTest
 {
-    private const string SecretKey = "fly_sk_eu_production_abc123";
+    private const string SecretKey = "fly_sk_production_abc123";
     private const string EventJson =
         """{"request_id":"r1","visitor_id":"v1","occurred_at":"2026-01-02T03:04:05Z"}""";
 
     [Theory]
     [InlineData("")]
     [InlineData("nonsense")]
-    [InlineData("fly_pk_eu_production_abc")]      // a browser key
-    [InlineData("fly_px_eu_production_abc")]      // a proxy key
-    [InlineData("fly_mk_eu_production_abc")]      // a management key
-    [InlineData("fly_sk_ap_production_abc")]      // an unknown region
-    [InlineData("fly_sk_eu_sandbox_abc")]         // an unknown environment
-    [InlineData("fly_sk_eu_production_")]         // no suffix
-    [InlineData("fly_sk_eu_production_abc\n")]    // a trailing newline
+    [InlineData("fly_pk_production_abc")]      // a browser key
+    [InlineData("fly_px_production_abc")]      // a proxy key
+    [InlineData("fly_mk_production_abc")]      // a management key
+    [InlineData("fly_sk_sandbox_abc")]         // an unknown environment
+    [InlineData("fly_sk_production_")]         // no suffix
+    [InlineData("fly_sk_production_abc\n")]    // a trailing newline
     public void RefusesEveryKeyThatIsNotASecretKey(string key)
     {
         ArgumentException refused = Assert.Throws<ArgumentException>(
@@ -38,7 +37,7 @@ public class FingerlyClientTest
         // into an API that accepts one.
         Assert.Throws<ArgumentException>(() => new FingerlyClient(new FingerlyOptions
         {
-            SecretKey = "fly_pk_eu_production_abc",
+            SecretKey = "fly_pk_production_abc",
             Endpoint = "http://127.0.0.1:9",
         }));
     }

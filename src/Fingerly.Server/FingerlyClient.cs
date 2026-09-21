@@ -110,10 +110,9 @@ public sealed class FingerlyClient : IDisposable
 
         // Validate the key even when an endpoint is given, so a public, proxy
         // or management key can never reach an API that would accept it.
-        Keys.Scope scope = Keys.Parse(
-            options.SecretKey, Keys.Secret, nameof(FingerlyOptions.SecretKey));
+        Keys.Parse(options.SecretKey, Keys.Secret, nameof(FingerlyOptions.SecretKey));
         string origin = Keys.Origin(
-            options.Endpoint ?? scope.Origin, nameof(FingerlyOptions.Endpoint));
+            options.Endpoint ?? Keys.DefaultEndpoint, nameof(FingerlyOptions.Endpoint));
         string apiVersion = Keys.ApiVersion(
             options.ApiVersion, nameof(FingerlyOptions.ApiVersion));
 

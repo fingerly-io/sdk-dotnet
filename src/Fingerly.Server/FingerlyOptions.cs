@@ -14,14 +14,14 @@ namespace Fingerly;
 public sealed class FingerlyOptions
 {
     /// <summary>
-    /// A server-only key, <c>fly_sk_{eu|us}_{environment}_…</c>, whose prefix
-    /// selects the regional API and the environment read. Required.
+    /// A server-only key, <c>fly_sk_{environment}_…</c>, whose prefix names
+    /// the environment read. Required.
     /// </summary>
     public string SecretKey { get; set; } = string.Empty;
 
     /// <summary>
-    /// Overrides the regional origin implied by the key, for a local or
-    /// self-hosted API. The key still decides which kind of key is accepted.
+    /// Overrides the Fingerly API origin, for a local or self-hosted API. The
+    /// key still decides which kind of key is accepted.
     /// </summary>
     public string? Endpoint { get; set; }
 

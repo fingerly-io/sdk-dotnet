@@ -12,8 +12,8 @@ namespace Fingerly.AspNetCore.Tests;
 
 public class FingerlyProxyMiddlewareTest
 {
-    private const string ProxyKey = "fly_px_eu_production_proxy";
-    private const string PublicKey = "fly_pk_eu_production_browser";
+    private const string ProxyKey = "fly_px_production_proxy";
+    private const string PublicKey = "fly_pk_production_browser";
 
     /// <summary>
     /// The trap this middleware exists to avoid. Reading the body to find out
@@ -142,7 +142,7 @@ public class FingerlyProxyMiddlewareTest
         {
             Content = new StringContent("{}", Encoding.UTF8, "application/json"),
         };
-        request.Headers.TryAddWithoutValidation("X-API-Key", "fly_pk_us_production_browser");
+        request.Headers.TryAddWithoutValidation("X-API-Key", "fly_pk_staging_browser");
         HttpResponseMessage answer = await site.Client.SendAsync(request);
 
         Assert.Equal(HttpStatusCode.Unauthorized, answer.StatusCode);
