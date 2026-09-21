@@ -8,7 +8,7 @@ using Fingerly;
 
 using var fingerly = new FingerlyClient(new FingerlyOptions
 {
-    SecretKey = "fly_sk_eu_production_trimcheck",
+    SecretKey = "fly_sk_production_trimcheck",
     Endpoint = "http://127.0.0.1:9",
     Timeout = TimeSpan.FromMilliseconds(250),
 });
@@ -24,7 +24,7 @@ Console.WriteLine(Webhooks.Parse(
 
 using var proxy = new FingerlyProxy(new FingerlyProxyOptions
 {
-    ProxyKey = "fly_px_eu_production_trimcheck",
+    ProxyKey = "fly_px_production_trimcheck",
     Upstream = "http://127.0.0.1:9",
     ClientIp = _ => "203.0.113.7",
 });
@@ -32,7 +32,7 @@ var request = new ProxyRequest("POST", "/api/fingerly/api/v1/identify")
 {
     Body = new MemoryStream(Encoding.UTF8.GetBytes("{}")),
 };
-request.AddHeader("X-API-Key", "fly_pk_eu_production_trimcheck");
+request.AddHeader("X-API-Key", "fly_pk_production_trimcheck");
 Console.WriteLine((await proxy.HandleAsync(request)).Status);
 
 Console.WriteLine("trim check ok");
