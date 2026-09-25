@@ -25,10 +25,11 @@ Console.WriteLine(Webhooks.Parse(
 using var proxy = new FingerlyProxy(new FingerlyProxyOptions
 {
     ProxyKey = "fly_px_production_trimcheck",
+    Path = "/k7x2qm4a",
     Upstream = "http://127.0.0.1:9",
     ClientIp = _ => "203.0.113.7",
 });
-var request = new ProxyRequest("POST", "/api/fingerly/api/v1/identify")
+var request = new ProxyRequest("POST", "/k7x2qm4a")
 {
     Body = new MemoryStream(Encoding.UTF8.GetBytes("{}")),
 };

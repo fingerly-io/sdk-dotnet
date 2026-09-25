@@ -37,12 +37,18 @@ public sealed class FingerlyProxyOptions
     public Func<ProxyRequest, string?>? ClientIp { get; set; }
 
     /// <summary>
-    /// The path the proxy is mounted under, which it must match.
+    /// The path the dashboard issued for this proxy, such as <c>/k7x2qm4a</c>,
+    /// matched exactly. Trailing slashes are ignored.
     /// </summary>
-    public string Prefix { get; set; } = "/api/fingerly";
+    /// <remarks>
+    /// The proxy answers that path and nothing under it. Leave it null only
+    /// where the host already routes that one path to the proxy and nothing
+    /// else; <c>UseFingerlyProxy</c> sees every request, so it needs it.
+    /// </remarks>
+    public string? Path { get; set; }
 
     /// <summary>
-    /// The version accepted locally and forwarded upstream.
+    /// The API version forwarded upstream.
     /// </summary>
     public string ApiVersion { get; set; } = "v1";
 

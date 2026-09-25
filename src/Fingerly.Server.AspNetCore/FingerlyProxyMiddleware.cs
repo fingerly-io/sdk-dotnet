@@ -70,11 +70,11 @@ internal static class ProxyExchange
     /// </summary>
     /// <remarks>
     /// <c>Request.Path</c> alone, never <c>PathBase + Path</c>. ASP.NET Core
-    /// moves a mount into the path base: under <c>app.Map("/metrics")</c> the
-    /// path is already stripped of it, and under <c>UsePathBase("/app")</c> or
+    /// moves a mount into the path base: under <c>UsePathBase("/app")</c> or
     /// an IIS virtual directory the path base is a deployment detail the
-    /// configured prefix knows nothing about. The application-relative path is
-    /// the one that means the same thing in all three.
+    /// configured path knows nothing about, and a route group's prefix is
+    /// already part of what routing matched. The application-relative path is
+    /// the one that means the same thing everywhere.
     /// </remarks>
     internal static string PathOf(HttpContext context) =>
         context.Request.Path.Value ?? string.Empty;

@@ -93,8 +93,7 @@ public class ServiceCollectionTest
         FingerlyProxy second = provider.GetRequiredService<FingerlyProxy>();
 
         Assert.Same(first, second);
-        Assert.Equal("/api/fingerly", first.Prefix);
-        Assert.Equal("v1", first.ApiVersion);
+        Assert.Null(first.Path);
     }
 
     [Fact]
@@ -105,7 +104,7 @@ public class ServiceCollectionTest
             services => services.AddFingerlyProxy(options =>
             {
                 options.ProxyKey = ProxyKey;
-                options.Prefix = "/metrics";
+                options.Path = "/k7x2qm4a";
                 options.Upstream = upstream.Origin;
                 options.ClientIp = _ => "203.0.113.7";
             }),
@@ -115,7 +114,7 @@ public class ServiceCollectionTest
                 app.Run(context => context.Response.WriteAsync("app"));
             });
 
-        var request = new HttpRequestMessage(HttpMethod.Post, "/metrics/api/v1/identify")
+        var request = new HttpRequestMessage(HttpMethod.Post, "/k7x2qm4a")
         {
             Content = new StringContent("{}", Encoding.UTF8, "application/json"),
         };
@@ -123,7 +122,7 @@ public class ServiceCollectionTest
         HttpResponseMessage answer = await site.Client.SendAsync(request);
 
         Assert.Equal(HttpStatusCode.OK, answer.StatusCode);
-        Assert.Equal("/api/v1/identify", upstream.Requests[0].Path);
+        Assert.Equal("/api/v1/ingest", upstream.Requests[0].Path);
     }
 
     [Fact]
@@ -134,13 +133,13 @@ public class ServiceCollectionTest
             services => services.AddFingerlyProxy(options =>
             {
                 options.ProxyKey = ProxyKey;
-                options.Prefix = "/metrics";
+                options.Path = "/k7x2qm4a";
                 options.Upstream = upstream.Origin;
                 options.ClientIp = _ => "203.0.113.7";
             }),
             app => app.MapFingerlyProxy());
 
-        var request = new HttpRequestMessage(HttpMethod.Post, "/metrics/api/v1/identify")
+        var request = new HttpRequestMessage(HttpMethod.Post, "/k7x2qm4a")
         {
             Content = new StringContent("{}", Encoding.UTF8, "application/json"),
         };

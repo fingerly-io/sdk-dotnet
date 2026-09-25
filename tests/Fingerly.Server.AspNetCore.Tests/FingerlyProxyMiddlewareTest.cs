@@ -25,7 +25,7 @@ public class FingerlyProxyMiddlewareTest
     public async Task PassesAnotherRouteAlongWithItsBodyIntact()
     {
         await using TestApi upstream = await TestApi.RespondAsync(200, "{}");
-        using FingerlyProxy proxy = Proxy(upstream.Origin, "/metrics");
+        using FingerlyProxy proxy = Proxy(upstream.Origin, "/k7x2qm4a");
         await using TestSite site = await TestSite.StartAsync(app =>
         {
             app.UseFingerlyProxy(proxy);
@@ -45,49 +45,69 @@ public class FingerlyProxyMiddlewareTest
     }
 
     [Fact]
-    public async Task ForwardsIdentifyFromTheMountedPath()
+    public async Task ForwardsFromTheMountedPath()
     {
         await using TestApi upstream = await TestApi.RespondAsync(200, """{"visitor_id":"v1"}""");
-        using FingerlyProxy proxy = Proxy(upstream.Origin, "/metrics");
+        using FingerlyProxy proxy = Proxy(upstream.Origin, "/k7x2qm4a");
         await using TestSite site = await TestSite.StartAsync(app =>
         {
             app.UseFingerlyProxy(proxy);
             app.Run(context => context.Response.WriteAsync("app"));
         });
 
-        HttpResponseMessage answer = await Identify(site, "/metrics/api/v1/identify");
+        HttpResponseMessage answer = await Send(site, "/k7x2qm4a");
 
         Assert.Equal(HttpStatusCode.OK, answer.StatusCode);
         Assert.Equal("""{"visitor_id":"v1"}""", await answer.Content.ReadAsStringAsync());
         Assert.Equal("no-store", answer.Headers.CacheControl!.ToString());
-        Assert.Equal("/api/v1/identify", upstream.Requests[0].Path);
+        Assert.Equal("/api/v1/ingest", upstream.Requests[0].Path);
         Assert.Equal("""{"sdk":1}""", upstream.Requests[0].Text);
+        Assert.Equal(
+            "dotnet/" + FingerlyClient.Version, upstream.Requests[0].Header("X-Fingerly-Proxy-Version"));
     }
 
     /// <summary>
-    /// <c>app.Map</c> moves the matched segment out of the path and into the
-    /// path base, so by the time the middleware runs the prefix is already
-    /// gone. The proxy accepts the path either way for exactly this.
+    /// The path is matched exactly, so anything under it is the application's
+    /// to answer, not the proxy's.
     /// </summary>
     [Fact]
-    public async Task WorksWhenMapAlreadyStrippedThePrefix()
+    public async Task PassesAPathUnderItsOwnAlong()
     {
-        await using TestApi upstream = await TestApi.RespondAsync(200, """{"visitor_id":"v1"}""");
-        using FingerlyProxy proxy = Proxy(upstream.Origin, "/metrics");
+        await using TestApi upstream = await TestApi.RespondAsync(200, "{}");
+        using FingerlyProxy proxy = Proxy(upstream.Origin, "/k7x2qm4a");
         await using TestSite site = await TestSite.StartAsync(app =>
         {
-            app.Map("/metrics", branch => branch.UseFingerlyProxy(proxy));
+            app.UseFingerlyProxy(proxy);
             app.Run(context => context.Response.WriteAsync("app"));
         });
 
-        HttpResponseMessage answer = await Identify(site, "/metrics/api/v1/identify");
+        HttpResponseMessage answer = await Send(site, "/k7x2qm4a/admin");
 
-        Assert.Equal(HttpStatusCode.OK, answer.StatusCode);
-        Assert.Equal("/api/v1/identify", upstream.Requests[0].Path);
+        Assert.Equal("app", await answer.Content.ReadAsStringAsync());
+        Assert.Empty(upstream.Requests);
     }
 
     /// <summary>
-    /// A virtual directory is a deployment detail the configured prefix knows
+    /// Middleware sees every request, so a proxy that answered wherever it
+    /// was routed would take the whole application.
+    /// </summary>
+    [Fact]
+    public void RefusesToMountAProxyWithoutAPath()
+    {
+        using var proxy = new FingerlyProxy(new FingerlyProxyOptions
+        {
+            ProxyKey = ProxyKey,
+            Upstream = "http://127.0.0.1:9",
+            ClientIp = _ => "203.0.113.7",
+        });
+        WebApplicationBuilder builder = WebApplication.CreateSlimBuilder();
+        using var app = builder.Build();
+
+        Assert.Throws<ArgumentException>(() => app.UseFingerlyProxy(proxy));
+    }
+
+    /// <summary>
+    /// A virtual directory is a deployment detail the configured path knows
     /// nothing about. Matching on the application-relative path is what keeps
     /// the same configuration working in both places.
     /// </summary>
@@ -95,7 +115,7 @@ public class FingerlyProxyMiddlewareTest
     public async Task WorksUnderAPathBase()
     {
         await using TestApi upstream = await TestApi.RespondAsync(200, """{"visitor_id":"v1"}""");
-        using FingerlyProxy proxy = Proxy(upstream.Origin, "/metrics");
+        using FingerlyProxy proxy = Proxy(upstream.Origin, "/k7x2qm4a");
         await using TestSite site = await TestSite.StartAsync(app =>
         {
             app.UsePathBase("/shop");
@@ -103,24 +123,24 @@ public class FingerlyProxyMiddlewareTest
             app.Run(context => context.Response.WriteAsync("app"));
         });
 
-        HttpResponseMessage answer = await Identify(site, "/shop/metrics/api/v1/identify");
+        HttpResponseMessage answer = await Send(site, "/shop/k7x2qm4a");
 
         Assert.Equal(HttpStatusCode.OK, answer.StatusCode);
-        Assert.Equal("/api/v1/identify", upstream.Requests[0].Path);
+        Assert.Equal("/api/v1/ingest", upstream.Requests[0].Path);
     }
 
     [Fact]
     public async Task AnswersAWrongMethodItself()
     {
         await using TestApi upstream = await TestApi.RespondAsync(200, "{}");
-        using FingerlyProxy proxy = Proxy(upstream.Origin, "/metrics");
+        using FingerlyProxy proxy = Proxy(upstream.Origin, "/k7x2qm4a");
         await using TestSite site = await TestSite.StartAsync(app =>
         {
             app.UseFingerlyProxy(proxy);
             app.Run(context => context.Response.WriteAsync("app"));
         });
 
-        HttpResponseMessage answer = await site.Client.GetAsync("/metrics/api/v1/identify");
+        HttpResponseMessage answer = await site.Client.GetAsync("/k7x2qm4a");
 
         Assert.Equal(HttpStatusCode.MethodNotAllowed, answer.StatusCode);
         Assert.Contains("POST", answer.Content.Headers.Allow);
@@ -131,14 +151,14 @@ public class FingerlyProxyMiddlewareTest
     public async Task RefusesAnUnauthorizedBrowserWithoutCallingFingerly()
     {
         await using TestApi upstream = await TestApi.RespondAsync(200, "{}");
-        using FingerlyProxy proxy = Proxy(upstream.Origin, "/metrics");
+        using FingerlyProxy proxy = Proxy(upstream.Origin, "/k7x2qm4a");
         await using TestSite site = await TestSite.StartAsync(app =>
         {
             app.UseFingerlyProxy(proxy);
             app.Run(context => context.Response.WriteAsync("app"));
         });
 
-        var request = new HttpRequestMessage(HttpMethod.Post, "/metrics/api/v1/identify")
+        var request = new HttpRequestMessage(HttpMethod.Post, "/k7x2qm4a")
         {
             Content = new StringContent("{}", Encoding.UTF8, "application/json"),
         };
@@ -157,7 +177,7 @@ public class FingerlyProxyMiddlewareTest
         using var proxy = new FingerlyProxy(new FingerlyProxyOptions
         {
             ProxyKey = ProxyKey,
-            Prefix = "/metrics",
+            Path = "/k7x2qm4a",
             Upstream = upstream.Origin,
             MaxBodyBytes = 64,
             ClientIp = _ => "203.0.113.7",
@@ -168,7 +188,7 @@ public class FingerlyProxyMiddlewareTest
             app.Run(context => context.Response.WriteAsync("app"));
         });
 
-        var request = new HttpRequestMessage(HttpMethod.Post, "/metrics/api/v1/identify")
+        var request = new HttpRequestMessage(HttpMethod.Post, "/k7x2qm4a")
         {
             Content = new StringContent(new string('a', 4096), Encoding.UTF8, "application/json"),
         };
@@ -191,14 +211,14 @@ public class FingerlyProxyMiddlewareTest
             context.Response.StatusCode = 204;
             return Task.CompletedTask;
         });
-        using FingerlyProxy proxy = Proxy(upstream.Origin, "/metrics");
+        using FingerlyProxy proxy = Proxy(upstream.Origin, "/k7x2qm4a");
         await using TestSite site = await TestSite.StartAsync(app =>
         {
             app.UseFingerlyProxy(proxy);
             app.Run(context => context.Response.WriteAsync("app"));
         });
 
-        HttpResponseMessage answer = await Identify(site, "/metrics/api/v1/identify");
+        HttpResponseMessage answer = await Send(site, "/k7x2qm4a");
 
         Assert.Equal(HttpStatusCode.NoContent, answer.StatusCode);
         Assert.Equal(string.Empty, await answer.Content.ReadAsStringAsync());
@@ -211,7 +231,7 @@ public class FingerlyProxyMiddlewareTest
         using var proxy = new FingerlyProxy(new FingerlyProxyOptions
         {
             ProxyKey = ProxyKey,
-            Prefix = "/metrics",
+            Path = "/k7x2qm4a",
             Upstream = upstream.Origin,
             ClientIp = request => request.Header("CF-Connecting-IP"),
         });
@@ -221,7 +241,7 @@ public class FingerlyProxyMiddlewareTest
             app.Run(context => context.Response.WriteAsync("app"));
         });
 
-        var request = new HttpRequestMessage(HttpMethod.Post, "/metrics/api/v1/identify")
+        var request = new HttpRequestMessage(HttpMethod.Post, "/k7x2qm4a")
         {
             Content = new StringContent("{}", Encoding.UTF8, "application/json"),
         };
@@ -240,7 +260,7 @@ public class FingerlyProxyMiddlewareTest
             () => ((IApplicationBuilder)null!).UseFingerlyProxy());
     }
 
-    private static Task<HttpResponseMessage> Identify(TestSite site, string path)
+    private static Task<HttpResponseMessage> Send(TestSite site, string path)
     {
         var request = new HttpRequestMessage(HttpMethod.Post, path)
         {
@@ -250,11 +270,11 @@ public class FingerlyProxyMiddlewareTest
         return site.Client.SendAsync(request);
     }
 
-    private static FingerlyProxy Proxy(string upstream, string prefix) =>
+    private static FingerlyProxy Proxy(string upstream, string path) =>
         new(new FingerlyProxyOptions
         {
             ProxyKey = ProxyKey,
-            Prefix = prefix,
+            Path = path,
             Upstream = upstream,
             ClientIp = _ => "203.0.113.7",
         });

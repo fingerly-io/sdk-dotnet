@@ -171,16 +171,19 @@ own site and those requests become first-party. The proxy key is what lets that
 hop declare the visitor's real address, origin and user agent; a public key
 alone never can, so nobody can spoof them.
 
+Create a proxy in the dashboard (**Integration > Proxy keys**). It issues the
+key and a random path such as `/k7x2qm4a`; use that path as it is.
+
 ```csharp
 builder.Services.AddFingerlyProxy(options =>
 {
     options.ProxyKey = builder.Configuration["Fingerly:ProxyKey"]!;
-    options.Prefix = "/metrics";
+    options.Path = "/k7x2qm4a";
     options.ClientIp = request => request.Header("CF-Connecting-IP");
 });
 ```
 
-Then mount it, either as routed endpoints:
+Then mount it, either as a routed endpoint:
 
 ```csharp
 app.MapFingerlyProxy();
@@ -193,8 +196,8 @@ routing:
 app.UseFingerlyProxy();
 ```
 
-Prefer the mapped endpoints in a minimal-API application: the two routes become
-ordinary endpoints, so rate limiting, CORS and output caching apply to them the
+Prefer the mapped endpoint in a minimal-API application: the path becomes an
+ordinary endpoint, so rate limiting, CORS and output caching apply to it the
 way they apply to everything else. Either way, put it ahead of authentication:
 the browser SDK carries no user, and a policy that redirected it to a sign-in
 page would break identification for every signed-out visitor.
@@ -202,36 +205,50 @@ page would break identification for every signed-out visitor.
 Then point the browser SDK at the same path:
 
 ```ts
-const fingerly = await load({ apiKey: 'fly_pk_…', endpoints: '/metrics' })
+const fingerly = await load({ apiKey: 'fly_pk_…', endpoints: '/k7x2qm4a' })
 ```
 
 ### What the proxy does
 
-It forwards only `POST` to `{prefix}/api/v1/identify` and
-`{prefix}/api/v1/events/{request_id}/supplement`. Anything else gets `404`, and
-any other method gets `405`. Event reads need a secret key and stay unreachable
-from a browser by construction.
+The browser SDK posts both of its calls to that one path, and the proxy
+forwards each to Fingerly's one ingest URL, `https://api.fingerly.io/api/v1/ingest`
+(`ApiVersion` changes the version there and nowhere else). It answers only
+`POST` to the path itself, trailing slashes aside: any other path gets `404`,
+including anything under it, and any other method gets `405`. Event reads need
+a secret key and stay unreachable from a browser by construction.
 
 The browser must present a public key from the same environment as the proxy
 key, or the request gets `401`. Bodies over 1 MiB get `413`, enforced
-while reading rather than after buffering. Responses are marked `no-store`.
-Only the content type, the visitor metadata Fingerly needs, and an
-`Idempotency-Key` are forwarded; customer cookies and authorization headers
-never are.
+while reading rather than after buffering. Only the content type, the visitor
+metadata Fingerly needs, and an `Idempotency-Key` are forwarded; customer
+cookies and authorization headers never are. The proxy reports itself upstream
+as `dotnet/0.1.0`, which the dashboard shows per proxy.
+
+Only `Content-Type`, `X-Request-Id`, `RateLimit-Limit`, `RateLimit-Remaining`
+and `Retry-After` are relayed back, with `Cache-Control: no-store` added. A
+blocker can match a response header by name, so this is an allowlist: nothing
+on the response names Fingerly, whatever the API adds later.
 
 The middleware asks `proxy.Handles(path)` before reading anything. It sees
 every request in the pipeline, and calling `HandleAsync` to find out whether
 one belongs to Fingerly would have consumed a request body the application
 still needs. In ASP.NET Core that body is a forward-only stream unless the
 application opted into buffering, so the mistake would be silent rather than
-loud.
+loud. For the same reason the middleware refuses a proxy with no `Path`.
 
-`Prefix` is the path within your application. It excludes anything
+`Path` is the path within your application. It excludes anything
 `UsePathBase` or an IIS virtual directory adds, because the proxy matches
-`Request.Path`, which is application-relative in every host. A prefix that
-`app.Map` has already stripped works too: the path is accepted as either
-carrying the prefix or having had it removed. Choose a neutral one. Blockers
-look for words such as `fingerprint`, `tracking` and `fingerly`.
+`Request.Path`, which is application-relative in every host. It is optional
+where routing already decides the path: leave it unset and give the path to
+`MapFingerlyProxy` instead, which also works inside a route group.
+
+```csharp
+app.MapGroup("/shop").MapFingerlyProxy("/k7x2qm4a");
+```
+
+Setting it in both places is refused, so the two cannot disagree. Use the path
+the dashboard issued rather than one of your own: blockers look for words such
+as `fingerprint`, `tracking` and `analytics`.
 
 > **`ClientIp` is the one thing you must get right.** Resolve it from a header
 > your own infrastructure sets, such as your load balancer's or CDN's. Never
@@ -241,14 +258,15 @@ look for words such as `fingerprint`, `tracking` and `fingerly`.
 
 `FingerlyProxy` speaks to no server API. It reads a `ProxyRequest` and returns
 a `ProxyResponse`, so an isolated-worker Azure Function, a YARP transform or an
-OWIN pipeline can mount it by translating those two shapes. That is also why
-the core still runs on .NET Standard 2.0.
+OWIN pipeline can mount it by translating those two shapes. Where that host
+routes only the one path to it, `Path` can stay unset. That is also why the
+core still runs on .NET Standard 2.0.
 
 ## Development and release preparation
 
 ```sh
 dotnet build                                   # both target frameworks, warnings as errors
-dotnet test                                    # 145 tests against a real Kestrel server
+dotnet test                                    # 157 tests against a real Kestrel server
 dotnet pack -c Release -o artifacts
 
 FINGERLY_CONTRACT_DIR=../../contract dotnet run --project tools/SyncContract

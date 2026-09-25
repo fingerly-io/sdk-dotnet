@@ -9,7 +9,7 @@ using System.Threading.Tasks;
 namespace Fingerly;
 
 /// <summary>
-/// Same-origin proxy for the browser SDK's identify and supplement calls.
+/// Same-origin proxy for the browser SDK.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -27,37 +27,46 @@ namespace Fingerly;
 /// <see cref="ProxyResponse"/> back.
 /// </para>
 /// <para>
-/// Only identify and supplement are forwarded, never event reads: reading
-/// events needs a secret key and must stay unreachable from a browser.
-/// Customer cookies and authorization headers are never passed on.
+/// The browser SDK posts both of its calls to one path, and every one is
+/// forwarded to Fingerly's one ingest URL, never anywhere else and never to
+/// event reads: reading events needs a secret key and must stay unreachable
+/// from a browser. Customer cookies and authorization headers are never passed
+/// on, and nothing relayed back names Fingerly.
 /// </para>
 /// </remarks>
 public sealed class FingerlyProxy : IDisposable
 {
     private const string UserAgentValue = "fingerly-dotnet/" + FingerlyClient.Version;
 
+    /// <summary>What this proxy reports itself as upstream; shown per proxy in the dashboard.</summary>
+    private const string ProxyVersion = "dotnet/" + FingerlyClient.Version;
+
     /// <summary>Statuses that must not carry a body.</summary>
     private static readonly HashSet<int> Bodiless = new() { 204, 205, 304 };
 
     /// <summary>
-    /// Upstream headers that describe that connection rather than our
-    /// response. The HTTP client has already framed and decoded the body, so
-    /// replaying them would misdescribe the bytes handed back.
+    /// The response headers relayed to the browser, and nothing else.
     /// </summary>
-    private static readonly HashSet<string> ConnectionHeaders =
+    /// <remarks>
+    /// A content blocker can match a response header by name, so an allowlist
+    /// is what keeps anything naming Fingerly off the page, whatever the API
+    /// adds in future. It also leaves out the headers that describe the
+    /// upstream connection rather than the body: the HTTP client has already
+    /// framed and decoded it, so replaying them would misdescribe the bytes
+    /// handed back.
+    /// </remarks>
+    private static readonly HashSet<string> RelayedHeaders =
         new(StringComparer.OrdinalIgnoreCase)
         {
-            "connection", "content-encoding", "content-length", "keep-alive",
-            "proxy-authenticate", "proxy-authorization", "te", "trailer",
-            "transfer-encoding", "upgrade",
+            "content-type", "x-request-id", "ratelimit-limit", "ratelimit-remaining",
+            "retry-after",
         };
 
     private readonly string _key;
     private readonly Keys.Scope _scope;
     private readonly bool _usesProxyKey;
-    private readonly string _upstream;
-    private readonly string _prefix;
-    private readonly string _apiVersion;
+    private readonly string _upstreamUrl;
+    private readonly string? _path;
     private readonly TimeSpan _timeout;
     private readonly Func<ProxyRequest, string?> _clientIp;
     private readonly HttpClient _httpClient;
@@ -74,7 +83,7 @@ public sealed class FingerlyProxy : IDisposable
     /// </summary>
     /// <param name="options">The settings; the key and <see cref="FingerlyProxyOptions.ClientIp"/> are required.</param>
     /// <exception cref="ArgumentNullException"><paramref name="options"/> is null.</exception>
-    /// <exception cref="ArgumentException">A credential, route or callback is invalid.</exception>
+    /// <exception cref="ArgumentException">A credential, path or callback is invalid.</exception>
     /// <exception cref="ArgumentOutOfRangeException">A limit is not positive.</exception>
     public FingerlyProxy(FingerlyProxyOptions options)
     {
@@ -106,10 +115,11 @@ public sealed class FingerlyProxy : IDisposable
             _key,
             _usesProxyKey ? Keys.Proxy : Keys.Secret,
             _usesProxyKey ? nameof(options.ProxyKey) : "SecretKey");
-        _upstream = Keys.Origin(
-            options.Upstream ?? Keys.DefaultEndpoint, nameof(options.Upstream));
-        _apiVersion = Keys.ApiVersion(options.ApiVersion, nameof(options.ApiVersion));
-        _prefix = NormalizePrefix(options.Prefix, nameof(options.Prefix));
+        _upstreamUrl = Keys.Origin(
+                options.Upstream ?? Keys.DefaultEndpoint, nameof(options.Upstream))
+            + "/api/" + Keys.ApiVersion(options.ApiVersion, nameof(options.ApiVersion))
+            + "/ingest";
+        _path = options.Path is null ? null : NormalizePath(options.Path, nameof(options.Path));
         if (options.MaxBodyBytes <= 0)
         {
             throw new ArgumentOutOfRangeException(
@@ -128,16 +138,14 @@ public sealed class FingerlyProxy : IDisposable
     public long MaxBodyBytes { get; }
 
     /// <summary>
-    /// The path the proxy answers under, without a trailing slash.
+    /// The one path the proxy answers, without a trailing slash, or null when
+    /// it answers wherever the host routes it.
     /// </summary>
     /// <remarks>
-    /// Read by <c>MapFingerlyProxy</c> to build its route patterns, so the
+    /// Read by <c>MapFingerlyProxy</c> to build its route pattern, so the
     /// mount and the proxy cannot disagree about where it lives.
     /// </remarks>
-    public string Prefix => _prefix;
-
-    /// <summary>The API route version accepted locally and forwarded upstream.</summary>
-    public string ApiVersion => _apiVersion;
+    public string? Path => _path;
 
     /// <summary>
     /// Reports whether a path is one this proxy serves.
@@ -152,13 +160,17 @@ public sealed class FingerlyProxy : IDisposable
     /// silent rather than loud.
     /// </para>
     /// <para>
-    /// The answer is about the path alone: a wrong method on a path Fingerly
-    /// owns is this proxy's 405 to give, not the application's 404.
+    /// The answer is about the path alone: a wrong method on the proxy's path
+    /// is this proxy's 405 to give, not the application's 404. With no
+    /// <see cref="Path"/> configured every path is the proxy's.
     /// </para>
     /// </remarks>
-    /// <param name="path">The whole request path, including the mount prefix.</param>
+    /// <param name="path">The application-relative request path.</param>
     /// <returns><see langword="true"/> when the proxy should handle it.</returns>
-    public bool Handles(string? path) => path is not null && RouteFor(path) is not null;
+    public bool Handles(string? path) =>
+        _path is null
+        || (path is not null
+            && string.Equals(path.TrimEnd('/'), _path, StringComparison.Ordinal));
 
     /// <summary>
     /// The refusal for a body that passed <see cref="MaxBodyBytes"/>.
@@ -182,7 +194,7 @@ public sealed class FingerlyProxy : IDisposable
     /// </remarks>
     /// <param name="request">The incoming request, as the adapter read it.</param>
     /// <param name="cancellationToken">Cancels the forward.</param>
-    /// <returns>The upstream response, or a 405, 404, 401, 413, 400 or 502 refusal.</returns>
+    /// <returns>The upstream response, or a 404, 405, 401, 413, 400 or 502 refusal.</returns>
     /// <exception cref="ArgumentNullException"><paramref name="request"/> is null.</exception>
     public async Task<ProxyResponse> HandleAsync(
         ProxyRequest request, CancellationToken cancellationToken = default)
@@ -190,6 +202,11 @@ public sealed class FingerlyProxy : IDisposable
         if (request is null)
         {
             throw new ArgumentNullException(nameof(request));
+        }
+
+        if (!Handles(request.Path))
+        {
+            return ProxyResponse.Refusal(404, "Not Found");
         }
 
         if (!string.Equals(request.Method, "POST", StringComparison.OrdinalIgnoreCase))
@@ -200,12 +217,6 @@ public sealed class FingerlyProxy : IDisposable
                 new("Allow", "POST"),
             };
             return new ProxyResponse(405, headers, refusal.Body.ToArray());
-        }
-
-        string? upstreamPath = RouteFor(request.Path);
-        if (upstreamPath is null)
-        {
-            return ProxyResponse.Refusal(404, "Not Found");
         }
 
         string? apiKey = UpstreamKeyFor(request.Header("X-API-Key"));
@@ -233,8 +244,7 @@ public sealed class FingerlyProxy : IDisposable
             return PayloadTooLarge();
         }
 
-        using var upstream = new HttpRequestMessage(
-            HttpMethod.Post, _upstream + upstreamPath)
+        using var upstream = new HttpRequestMessage(HttpMethod.Post, _upstreamUrl)
         {
             Content = new ByteArrayContent(body),
         };
@@ -269,57 +279,6 @@ public sealed class FingerlyProxy : IDisposable
     public void Dispose() => _httpClient.Dispose();
 
     /// <summary>
-    /// Maps a local request path to its upstream path.
-    /// </summary>
-    /// <remarks>
-    /// The prefix is tolerated as either present or already stripped, so the
-    /// proxy works whether the host reports the whole path or only what
-    /// followed the mount.
-    /// </remarks>
-    /// <returns>The upstream path, or null when the route is not proxyable.</returns>
-    private string? RouteFor(string path)
-    {
-        string versioned = "/api/" + _apiVersion;
-        string? resource = null;
-        string mounted = _prefix + versioned;
-        if (path.StartsWith(mounted, StringComparison.Ordinal))
-        {
-            resource = path.Substring(mounted.Length);
-        }
-        else if (path.StartsWith(versioned, StringComparison.Ordinal))
-        {
-            resource = path.Substring(versioned.Length);
-        }
-        if (resource is null)
-        {
-            return null;
-        }
-        if (resource != "/identify" && !IsSupplement(resource))
-        {
-            return null;
-        }
-        return versioned + resource;
-    }
-
-    /// <summary>
-    /// True for <c>/events/{request_id}/supplement</c> with one id segment.
-    /// </summary>
-    private static bool IsSupplement(string resource)
-    {
-        const string Head = "/events/";
-        const string Tail = "/supplement";
-        if (!resource.StartsWith(Head, StringComparison.Ordinal)
-            || !resource.EndsWith(Tail, StringComparison.Ordinal)
-            || resource.Length <= Head.Length + Tail.Length)
-        {
-            return false;
-        }
-        string requestId = resource.Substring(
-            Head.Length, resource.Length - Head.Length - Tail.Length);
-        return requestId.IndexOf('/') < 0;
-    }
-
-    /// <summary>
     /// Decides which key to present upstream.
     /// </summary>
     /// <remarks>
@@ -346,7 +305,8 @@ public sealed class FingerlyProxy : IDisposable
     /// </summary>
     /// <remarks>
     /// Nothing is copied wholesale: only the body's content type, the visitor
-    /// metadata Fingerly needs, and an idempotency key when the SDK sent one.
+    /// metadata Fingerly needs, the proxy's own version, and an idempotency key
+    /// when the SDK sent one.
     /// The visitor writes the origin, user agent and content type, so each is
     /// checked before it is repeated into a header of ours.
     /// </remarks>
@@ -371,6 +331,7 @@ public sealed class FingerlyProxy : IDisposable
             "X-Fingerly-Origin", Safe(request.Header("Origin")) ?? string.Empty);
         upstream.Headers.TryAddWithoutValidation(
             "X-Fingerly-User-Agent", Safe(request.Header("User-Agent")) ?? string.Empty);
+        upstream.Headers.TryAddWithoutValidation("X-Fingerly-Proxy-Version", ProxyVersion);
         upstream.Headers.TryAddWithoutValidation("User-Agent", UserAgentValue);
         if (_usesProxyKey)
         {
@@ -388,7 +349,8 @@ public sealed class FingerlyProxy : IDisposable
     private static string? Safe(string? value) => Keys.IsHeaderSafe(value) ? value : null;
 
     /// <summary>
-    /// Returns the upstream response, uncacheable and without its framing.
+    /// Returns the upstream response, uncacheable and with only the
+    /// allowlisted headers.
     /// </summary>
     private static async Task<ProxyResponse> RelayAsync(HttpResponseMessage response)
     {
@@ -410,8 +372,7 @@ public sealed class FingerlyProxy : IDisposable
     {
         foreach (KeyValuePair<string, IEnumerable<string>> header in source)
         {
-            if (ConnectionHeaders.Contains(header.Key)
-                || string.Equals(header.Key, "Cache-Control", StringComparison.OrdinalIgnoreCase))
+            if (!RelayedHeaders.Contains(header.Key))
             {
                 continue;
             }
@@ -481,15 +442,22 @@ public sealed class FingerlyProxy : IDisposable
         return new HttpClient(handler, disposeHandler: !supplied);
     }
 
-    /// <summary>Validates the local mount path and drops trailing slashes.</summary>
-    private static string NormalizePrefix(string? value, string paramName)
+    /// <summary>
+    /// Validates the path the dashboard issued and drops trailing slashes.
+    /// </summary>
+    /// <remarks>
+    /// Shared with <c>MapFingerlyProxy</c>, so a path given there is held to
+    /// the same rule.
+    /// </remarks>
+    internal static string NormalizePath(string value, string paramName)
     {
-        string prefix = (value ?? string.Empty).TrimEnd('/');
-        if (!prefix.StartsWith("/", StringComparison.Ordinal)
-            || prefix.IndexOf('?') >= 0 || prefix.IndexOf('#') >= 0)
+        string path = value.Trim().TrimEnd('/');
+        if (!path.StartsWith("/", StringComparison.Ordinal) || path.Length < 2
+            || path.IndexOf('?') >= 0 || path.IndexOf('#') >= 0)
         {
-            throw new ArgumentException("Prefix must be an absolute URL path", paramName);
+            throw new ArgumentException(
+                "Path must be an absolute URL path such as /k7x2qm4a", paramName);
         }
-        return prefix;
+        return path;
     }
 }

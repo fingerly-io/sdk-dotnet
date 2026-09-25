@@ -72,7 +72,7 @@ public static class FingerlyServiceCollectionExtensions
     /// builder.Services.AddFingerlyProxy(options =>
     /// {
     ///     options.ProxyKey = builder.Configuration["Fingerly:ProxyKey"]!;
-    ///     options.Prefix = "/metrics";
+    ///     options.Path = "/k7x2qm4a";
     ///     options.ClientIp = request => request.Header("CF-Connecting-IP");
     /// });
     /// </code>
