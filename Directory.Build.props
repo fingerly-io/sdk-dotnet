@@ -22,6 +22,7 @@
   <PropertyGroup>
     <Version>0.1.0</Version>
     <Authors>Fingerly</Authors>
+    <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
     <Company>Fingerly</Company>
     <Product>Fingerly server SDK</Product>
     <PackageProjectUrl>https://docs.fingerly.io/docs/sdks/dotnet</PackageProjectUrl>
