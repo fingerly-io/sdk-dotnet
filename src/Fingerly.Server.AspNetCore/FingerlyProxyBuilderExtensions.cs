@@ -214,6 +214,8 @@ public static class FingerlyProxyEndpointRouteBuilderExtensions
 
         RequestDelegate handle = context =>
             ProxyExchange.ExecuteAsync(context, proxy, ProxyExchange.PathOf(context));
-        return endpoints.MapPost(path, handle);
+        // The browser SDK carries no user: a fallback "authenticated" policy
+        // would answer every signed-out visitor with a sign-in redirect.
+        return endpoints.MapPost(path, handle).AllowAnonymous();
     }
 }

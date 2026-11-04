@@ -6,6 +6,7 @@ using System.Threading.Tasks;
 using Fingerly.Tests;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.DependencyInjection;
 using Xunit;
 
 namespace Fingerly.AspNetCore.Tests;
@@ -35,6 +36,39 @@ public class MapFingerlyProxyTest
         Assert.Equal("/api/v1/ingest", upstream.Requests[0].Path);
         Assert.Equal("/api/v1/ingest", upstream.Requests[1].Path);
         Assert.Equal("""{"token":"t1"}""", upstream.Requests[1].Text);
+    }
+
+    /// <summary>
+    /// The browser SDK carries no user, so an application whose fallback
+    /// policy demands one must still let identification through: the mapped
+    /// endpoint is anonymous, and only it.
+    /// </summary>
+    [Fact]
+    public async Task StaysReachableBehindAFallbackAuthorizationPolicy()
+    {
+        await using TestApi upstream = await TestApi.RespondAsync(200, "{}");
+        using FingerlyProxy proxy = Proxy(upstream.Origin, "/k7x2qm4a");
+        await using TestSite site = await TestSite.StartAsync(
+            services =>
+            {
+                services.AddAuthentication("Cookies").AddCookie("Cookies");
+                services.AddAuthorization(options => options.FallbackPolicy =
+                    new Microsoft.AspNetCore.Authorization.AuthorizationPolicyBuilder()
+                        .RequireAuthenticatedUser().Build());
+            },
+            app =>
+            {
+                app.UseAuthentication();
+                app.UseAuthorization();
+                app.MapFingerlyProxy(proxy);
+                app.MapGet("/account", () => "private");
+            });
+
+        HttpResponseMessage identified = await Post(site, "/k7x2qm4a", "{}");
+        HttpResponseMessage account = await site.Client.GetAsync("/account");
+
+        Assert.Equal(HttpStatusCode.OK, identified.StatusCode);
+        Assert.Equal(HttpStatusCode.Redirect, account.StatusCode);
     }
 
     /// <summary>
