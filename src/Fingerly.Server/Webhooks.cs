@@ -35,6 +35,9 @@ public static class Webhooks
     /// </summary>
     public static TimeSpan DefaultTolerance { get; } = TimeSpan.FromMinutes(5);
 
+    /// <summary>Signature candidates read from one header; the rest are ignored.</summary>
+    internal const int MaxCandidates = 32;
+
     /// <summary>
     /// Reports whether a delivery came from Fingerly and is recent.
     /// </summary>
@@ -96,9 +99,12 @@ public static class Webhooks
         }
 
         byte[] expected = Sign(secret!, timestamp!, payload);
-        foreach (string candidate in signature!.Split(','))
+        // Rotation needs two or three candidates. A header with thousands is
+        // not a delivery, and checking each would be work done for an attacker.
+        string[] candidates = signature!.Split(new[] { ',' }, MaxCandidates + 1);
+        for (int i = 0; i < Math.Min(candidates.Length, MaxCandidates); i++)
         {
-            if (Matches(candidate, expected))
+            if (Matches(candidates[i], expected))
             {
                 return true;
             }

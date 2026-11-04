@@ -42,6 +42,17 @@ public class WebhooksTest
     }
 
     [Fact]
+    public void ReadsAtMostThirtyTwoCandidates()
+    {
+        string bad = Sign("whsec_other");
+        string thirtyOne = string.Join(",", System.Linq.Enumerable.Repeat(bad, 31));
+        string thirtyTwo = string.Join(",", System.Linq.Enumerable.Repeat(bad, 32));
+
+        Assert.True(Webhooks.Verify(Secret, Payload, Timestamp, thirtyOne + "," + Sign(Secret), now: SignedAt));
+        Assert.False(Webhooks.Verify(Secret, Payload, Timestamp, thirtyTwo + "," + Sign(Secret), now: SignedAt));
+    }
+
+    [Fact]
     public void RefusesATamperedPayload()
     {
         byte[] edited = Encoding.UTF8.GetBytes(Encoding.UTF8.GetString(Payload) + " ");
