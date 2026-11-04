@@ -67,6 +67,15 @@ public class FingerlyProxyTest
     [InlineData("")]
     [InlineData("/")]
     [InlineData("//")]
+    [InlineData("/k7x2qm4a/")]
+    [InlineData("/k7x2qm4a//")]
+    [InlineData("//k7x2qm4a")]
+    [InlineData("/a//b")]
+    [InlineData("/./k7x2qm4a")]
+    [InlineData("/a/../k7x2qm4a")]
+    [InlineData("/k7%32qm4a")]
+    [InlineData("/k7x2qm4a;x=1")]
+    [InlineData("/{tenant}/k7x2qm4a")]
     public void RefusesAPathThatIsNotAPath(string path)
     {
         Assert.Throws<ArgumentException>(() => new FingerlyProxy(new FingerlyProxyOptions
@@ -78,12 +87,12 @@ public class FingerlyProxyTest
     }
 
     [Fact]
-    public void DropsTrailingSlashesFromThePath()
+    public void TakesThePathExactlyAsGiven()
     {
         using var proxy = new FingerlyProxy(new FingerlyProxyOptions
         {
             ProxyKey = ProxyKey,
-            Path = ProxyPath + "//",
+            Path = ProxyPath,
             ClientIp = _ => "203.0.113.7",
         });
 
@@ -104,7 +113,9 @@ public class FingerlyProxyTest
 
     [Theory]
     [InlineData(ProxyPath, true)]
-    [InlineData(ProxyPath + "/", true)]                          // trailing slash
+    [InlineData(ProxyPath + "/", false)]                         // a trailing slash is another path
+    [InlineData(ProxyPath + "//", false)]
+    [InlineData("/" + ProxyPath, false)]                         // a doubled slash
     [InlineData(ProxyPath + "/admin", false)]                    // nothing under it
     [InlineData(ProxyPath + "/api/v1/identify", false)]
     [InlineData("/k7x2qm4", false)]                              // a prefix of it

@@ -270,6 +270,30 @@ public class FingerlyProxyMiddlewareTest
         return site.Client.SendAsync(request);
     }
 
+    [Theory]
+    [InlineData("/k7x2qm4a/")]
+    [InlineData("/K7X2QM4A")]
+    [InlineData("/x/../k7x2qm4a")]
+    [InlineData("/k7x2qm4%61")]
+    [InlineData("//k7x2qm4a")]
+    public async Task PassesNearMissesToTheApplication(string target)
+    {
+        await using TestApi upstream = await TestApi.RespondAsync(200, "{}");
+        using FingerlyProxy proxy = Proxy(upstream.Origin, "/k7x2qm4a");
+        await using TestSite site = await TestSite.StartAsync(app =>
+        {
+            app.UseFingerlyProxy(proxy);
+            app.Run(context =>
+            {
+                context.Response.StatusCode = 418;
+                return System.Threading.Tasks.Task.CompletedTask;
+            });
+        });
+
+        Assert.Equal(418, await RawPost.StatusAsync(site.Client.BaseAddress!, target, PublicKey));
+        Assert.Empty(upstream.Requests);
+    }
+
     [Fact]
     public async Task GivesTheCallbackThePeerAddress()
     {

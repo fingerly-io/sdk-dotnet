@@ -213,7 +213,21 @@ public static class FingerlyProxyEndpointRouteBuilderExtensions
         }
 
         RequestDelegate handle = context =>
-            ProxyExchange.ExecuteAsync(context, proxy, ProxyExchange.PathOf(context));
+        {
+            // Routing matches case-insensitively and ignores a trailing
+            // slash; the proxy answers only its exact path, as sent.
+            string requested = ProxyExchange.PathOf(context);
+            string? mapped = (context.GetEndpoint() as RouteEndpoint)?.RoutePattern.RawText;
+            if (mapped is not null && !mapped.StartsWith("/", StringComparison.Ordinal))
+            {
+                mapped = "/" + mapped;
+            }
+            bool exact = (mapped is null || string.Equals(requested, mapped, StringComparison.Ordinal))
+                && ProxyExchange.ArrivedAsSent(context);
+            return exact
+                ? ProxyExchange.ExecuteAsync(context, proxy, requested)
+                : ProxyExchange.NotFoundAsync(context);
+        };
         // The browser SDK carries no user: a fallback "authenticated" policy
         // would answer every signed-out visitor with a sign-in redirect.
         return endpoints.MapPost(path, handle).AllowAnonymous();

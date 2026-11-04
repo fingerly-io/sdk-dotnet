@@ -29,7 +29,7 @@ public class MapFingerlyProxyTest
 
         // The identification and the deferred report share the one path.
         HttpResponseMessage identified = await Post(site, "/k7x2qm4a", """{"sdk":1}""");
-        HttpResponseMessage reported = await Post(site, "/k7x2qm4a/", """{"token":"t1"}""");
+        HttpResponseMessage reported = await Post(site, "/k7x2qm4a", """{"token":"t1"}""");
 
         Assert.Equal(HttpStatusCode.OK, identified.StatusCode);
         Assert.Equal(HttpStatusCode.OK, reported.StatusCode);
@@ -69,6 +69,43 @@ public class MapFingerlyProxyTest
 
         Assert.Equal(HttpStatusCode.OK, identified.StatusCode);
         Assert.Equal(HttpStatusCode.Redirect, account.StatusCode);
+    }
+
+    /// <summary>
+    /// Routing matches case-insensitively, ignores a trailing slash and
+    /// resolves dot segments; the proxy answers only its path as sent.
+    /// </summary>
+    [Theory]
+    [InlineData("/k7x2qm4a/")]
+    [InlineData("/K7X2QM4A")]
+    [InlineData("/x/../k7x2qm4a")]
+    [InlineData("/./k7x2qm4a")]
+    [InlineData("/k7x2qm4%61")]
+    public async Task AnswersNearMissesWithItsOwn404(string target)
+    {
+        await using TestApi upstream = await TestApi.RespondAsync(200, "{}");
+        using FingerlyProxy proxy = Proxy(upstream.Origin, "/k7x2qm4a");
+        await using TestSite site = await TestSite.StartAsync(app => app.MapFingerlyProxy(proxy));
+
+        int status = await RawPost.StatusAsync(site.Client.BaseAddress!, target, PublicKey);
+
+        Assert.Equal(404, status);
+        Assert.Empty(upstream.Requests);
+    }
+
+    [Theory]
+    [InlineData("/shop/k7x2qm4a/")]
+    [InlineData("/SHOP/k7x2qm4a")]
+    public async Task AnswersNearMissesInsideAGroupWithItsOwn404(string target)
+    {
+        await using TestApi upstream = await TestApi.RespondAsync(200, "{}");
+        using FingerlyProxy proxy = Proxy(upstream.Origin, path: null);
+        await using TestSite site = await TestSite.StartAsync(
+            app => app.MapGroup("/shop").MapFingerlyProxy("/k7x2qm4a", proxy));
+
+        Assert.Equal(404, await RawPost.StatusAsync(site.Client.BaseAddress!, target, PublicKey));
+        Assert.Equal(200, await RawPost.StatusAsync(site.Client.BaseAddress!, "/shop/k7x2qm4a", PublicKey));
+        Assert.Single(upstream.Requests);
     }
 
     /// <summary>
@@ -172,11 +209,12 @@ public class MapFingerlyProxyTest
     [Fact]
     public void RefusesAProxyPathARoutePatternWouldReadAsAParameter()
     {
-        using FingerlyProxy proxy = Proxy("http://127.0.0.1:9", "/{tenant}/k7x2qm4a");
+        // The proxy itself refuses it now, before it can reach a route pattern.
+        Assert.Throws<ArgumentException>(() => Proxy("http://127.0.0.1:9", "/{tenant}/k7x2qm4a"));
+        using FingerlyProxy unrouted = Proxy("http://127.0.0.1:9", path: null);
         WebApplicationBuilder builder = WebApplication.CreateSlimBuilder();
         using var app = builder.Build();
-
-        Assert.Throws<ArgumentException>(() => app.MapFingerlyProxy(proxy));
+        Assert.Throws<ArgumentException>(() => app.MapFingerlyProxy("/{tenant}/k7x2qm4a", unrouted));
     }
 
     private static Task<HttpResponseMessage> Post(TestSite site, string path, string body)

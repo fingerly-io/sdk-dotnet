@@ -53,7 +53,7 @@ public sealed class FingerlyProxyMiddleware
         // forward-only stream unless the application enabled buffering, so the
         // mistake would be silent.
         string path = context.Request.Path.Value ?? string.Empty;
-        return _proxy.Handles(path)
+        return _proxy.Handles(path) && ProxyExchange.ArrivedAsSent(context)
             ? ProxyExchange.ExecuteAsync(context, _proxy, path)
             : _next(context);
     }
@@ -78,6 +78,44 @@ internal static class ProxyExchange
     /// </remarks>
     internal static string PathOf(HttpContext context) =>
         context.Request.Path.Value ?? string.Empty;
+
+    /// <summary>The proxy's own 404, for a near miss routing let through.</summary>
+    internal static Task NotFoundAsync(HttpContext context)
+    {
+        context.Response.StatusCode = StatusCodes.Status404NotFound;
+        context.Response.ContentType = "text/plain; charset=utf-8";
+        context.Response.Headers.CacheControl = "no-store";
+        return context.Response.WriteAsync("Not Found", context.RequestAborted);
+    }
+
+    /// <summary>
+    /// Reports whether the path the application sees is the one the visitor
+    /// sent, byte for byte.
+    /// </summary>
+    /// <remarks>
+    /// Kestrel resolves dot segments and decodes percent escapes before
+    /// <c>Request.Path</c> is set, so <c>/x/../k7x2qm4a</c> and
+    /// <c>/k7x2qm4%61</c> would otherwise reach the proxy as its own path.
+    /// Each is a different URL that a CDN, firewall or cache in front may
+    /// treat differently, so only the raw target as sent counts.
+    /// </remarks>
+    internal static bool ArrivedAsSent(HttpContext context)
+    {
+        string? raw = context.Features.Get<Microsoft.AspNetCore.Http.Features.IHttpRequestFeature>()?.RawTarget;
+        if (string.IsNullOrEmpty(raw))
+        {
+            return true; // A host that keeps no raw target has nothing to compare.
+        }
+        int query = raw!.IndexOf('?');
+        string rawPath = query >= 0 ? raw.Substring(0, query) : raw;
+        if (!rawPath.StartsWith("/", StringComparison.Ordinal)
+            && Uri.TryCreate(rawPath, UriKind.Absolute, out Uri? absolute))
+        {
+            rawPath = absolute.AbsolutePath; // absolute-form, as a forward proxy sends it
+        }
+        string seen = (context.Request.PathBase.Value ?? string.Empty) + (context.Request.Path.Value ?? string.Empty);
+        return string.Equals(rawPath, seen, StringComparison.Ordinal);
+    }
 
     internal static async Task ExecuteAsync(HttpContext context, FingerlyProxy proxy, string path)
     {

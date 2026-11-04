@@ -142,8 +142,8 @@ public sealed class FingerlyProxy : IDisposable
     public long MaxBodyBytes { get; }
 
     /// <summary>
-    /// The one path the proxy answers, without a trailing slash, or null when
-    /// it answers wherever the host routes it.
+    /// The one path the proxy answers, or null when it answers wherever the
+    /// host routes it.
     /// </summary>
     /// <remarks>
     /// Read by <c>MapFingerlyProxy</c> to build its route pattern, so the
@@ -168,13 +168,17 @@ public sealed class FingerlyProxy : IDisposable
     /// is this proxy's 405 to give, not the application's 404. With no
     /// <see cref="Path"/> configured every path is the proxy's.
     /// </para>
+    /// <para>
+    /// The match is exact and case-sensitive: a trailing slash is a different
+    /// path. The ASP.NET Core adapters also require the raw request target to
+    /// be that path as sent, so a dot segment or percent encoding that the
+    /// server decoded into it does not match either.
+    /// </para>
     /// </remarks>
     /// <param name="path">The application-relative request path.</param>
     /// <returns><see langword="true"/> when the proxy should handle it.</returns>
     public bool Handles(string? path) =>
-        _path is null
-        || (path is not null
-            && string.Equals(path.TrimEnd('/'), _path, StringComparison.Ordinal));
+        _path is null || string.Equals(path, _path, StringComparison.Ordinal);
 
     /// <summary>
     /// The refusal for a body that passed <see cref="MaxBodyBytes"/>.
@@ -511,21 +515,35 @@ public sealed class FingerlyProxy : IDisposable
         SharedHttp.CreateClient(handler);
 
     /// <summary>
-    /// Validates the path the dashboard issued and drops trailing slashes.
+    /// Validates the path the dashboard issued. It is matched exactly: the
+    /// proxy answers that path and nothing under or around it.
     /// </summary>
     /// <remarks>
     /// Shared with <c>MapFingerlyProxy</c>, so a path given there is held to
-    /// the same rule.
+    /// the same rule: plain segments only, with no trailing or doubled slash,
+    /// dot segment, percent encoding, path parameter, query or fragment.
     /// </remarks>
     internal static string NormalizePath(string value, string paramName)
     {
-        string path = value.Trim().TrimEnd('/');
-        if (!path.StartsWith("/", StringComparison.Ordinal) || path.Length < 2
-            || path.IndexOf('?') >= 0 || path.IndexOf('#') >= 0)
+        string path = value.Trim();
+        bool plain = PlainPath.IsMatch(path);
+        foreach (string segment in path.Split('/'))
+        {
+            if (segment == "." || segment == "..")
+            {
+                plain = false;
+            }
+        }
+        if (!plain)
         {
             throw new ArgumentException(
-                "Path must be an absolute URL path such as /k7x2qm4a", paramName);
+                "Path must be an absolute URL path such as /k7x2qm4a, with no trailing slash, "
+                + "dot segment, percent encoding, query or fragment", paramName);
         }
         return path;
     }
+
+    private static readonly System.Text.RegularExpressions.Regex PlainPath = new(
+        @"\A(/[A-Za-z0-9_~!$&'()*+,=:@.-]+)+\z",
+        System.Text.RegularExpressions.RegexOptions.CultureInvariant);
 }
