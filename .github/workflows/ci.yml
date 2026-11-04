@@ -31,6 +31,14 @@ jobs:
           echo "$contents" | grep -q 'lib/netstandard2.0/Fingerly.Server.dll'
       # System.Text.Json is the only runtime dependency the core is allowed to
       # have, and only on the framework that lacks it.
+      - name: every package carries its readme and licence
+        run: |
+          for package in artifacts/Fingerly.Server.0.1.0.nupkg artifacts/Fingerly.Server.AspNetCore.0.1.0.nupkg; do
+            contents=$(unzip -l "$package")
+            echo "$contents" | grep -q ' README.md$'
+            echo "$contents" | grep -q ' LICENSE$'
+            unzip -p "$package" '*.nuspec' | grep -q '<readme>README.md</readme>'
+          done
       - name: no unexpected runtime dependencies
         run: |
           unzip -p artifacts/Fingerly.Server.0.1.0.nupkg '*.nuspec' > core.nuspec
