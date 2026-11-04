@@ -6,19 +6,29 @@ nothing has been published to NuGet.
 
 ```sh
 dotnet add package Fingerly.Server
-dotnet add package Fingerly.Server.AspNetCore   # for the proxy
+dotnet add package Fingerly.Server.AspNetCore   # for the proxy and DI
 ```
 
 ```csharp
 using Fingerly;
 
+var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddFingerly(options =>
 {
     options.SecretKey = builder.Configuration["Fingerly:SecretKey"]!;
 });
+var app = builder.Build();
 
-// Anywhere a FingerlyClient is injected:
-Event ev = await fingerly.Events.GetAsync(requestId, cancellationToken);
+app.MapGet("/orders/{requestId}/check", async (string requestId, FingerlyClient fingerly, CancellationToken ct) =>
+{
+    Event ev = await fingerly.Events.GetAsync(requestId, ct);
+    return ev.IsScored ? Results.Ok(ev.SuspectLevel) : Results.Ok("unscored");
+});
+
+app.Run();
+```
+
+```csharp
 EventPage page = await fingerly.Events.ListAsync(
     new EventListOptions { Level = "high", Limit = 50 }, cancellationToken);
 ```
@@ -28,7 +38,8 @@ go to `https://api.fingerly.io`; `Endpoint` overrides that for a local
 API. Public, proxy, management, malformed and unsupported keys are rejected
 before network access, by the constructor rather than by the first call.
 Requests do not follow redirects. `GetAsync` and `ListAsync` each perform one
-request and never retry.
+request and never retry. An empty, `.` or `..` request id is an
+`ArgumentException`.
 
 ## Packages
 
@@ -55,11 +66,12 @@ that the trimmer can quietly break.
 There is no synchronous counterpart to any call, on purpose. Blocking a
 request thread on I/O is what exhausts a thread pool under load, and the
 deadlock that `.Result` can cause is not one an SDK could warn about at the
-call site.
+call site. Never call `.Result` or `.Wait()` on these methods.
 
-## Deadlines and cancellation
+## Deadlines, limits and connections
 
-`Timeout` bounds the whole exchange, including receiving the body. It is
+`Timeout` bounds the whole exchange, including receiving the body: a server
+that sends headers and then trickles cannot hold the call past it. It is
 applied with a linked `CancellationTokenSource` rather than by writing to
 `HttpClient.Timeout`, so handing the client a shared `HttpClient` does not
 rewrite a timeout that belongs to whoever else is using it.
@@ -69,6 +81,20 @@ The two reasons a call can stop early stay distinguishable. A deadline throws
 `OperationCanceledException`, which is what the caller who cancelled expects
 to catch. `HttpClient` reports both as `TaskCanceledException` on its own, so
 telling them apart is the SDK's job rather than yours.
+
+An answer larger than 4 MiB is refused rather than buffered, whatever
+`HttpClient` sent it: the client throws `FingerlyException`, the proxy answers
+502.
+
+Every client and proxy in a process shares one connection pool, so building
+one per request still reuses connections, and the pool recycles connections
+every two minutes so DNS changes are picked up. It keeps no cookie jar, never
+follows a redirect, and copies none of your application's `traceparent`,
+`tracestate` or `baggage` onto requests to Fingerly. `AddFingerly` configures
+the `IHttpClientFactory` handler the same way. If you pass your own
+`Handler`, give it `AllowAutoRedirect = false`, `UseCookies = false`, automatic
+decompression and
+`ActivityHeadersPropagator = DistributedContextPropagator.CreateNoOutputPropagator()`.
 
 ## Errors
 
@@ -85,12 +111,17 @@ catch (FingerlyApiException e) when (e.Status == 404)
 }
 ```
 
-`FingerlyApiException` carries `Status`, and optional `Code`, `Details` and
-`RequestId`. The secret key is stripped from all three, and the response body
-is never echoed. `IsEventNotFound` names the one retryable read failure, so it
-needs no status-and-code check of your own. A deadline throws
+`FingerlyApiException` is thrown for every non-2xx answer, redirects
+included. It carries `Status`, and optional `Code`, `Details`, `RequestId` and
+`RetryAfter`: the seconds `Retry-After` asked for, or null. The secret key is
+stripped from all of them, and a response body is never echoed, not even in
+an inner exception. `IsEventNotFound` names the one retryable read failure, so
+it needs no status-and-code check of your own. A deadline throws
 `FingerlyTimeoutException`; an unreachable API throws
 `FingerlyConnectionException`.
+
+No SDK object prints a credential: `ToString()` shows `[redacted]` in place of
+every key, and serializing the options leaves the keys out.
 
 ## Unscored events
 
@@ -136,19 +167,25 @@ they do not replace your application's authentication or replay protection.
 ## Webhooks
 
 ```csharp
-using var body = new MemoryStream();
-await request.Body.CopyToAsync(body, ct);
-byte[] payload = body.ToArray();
+string secret = builder.Configuration["Fingerly:WebhookSecret"]!;
 
-if (!Webhooks.Verify(secret, payload,
-        request.Headers["x-fingerly-timestamp"],
-        request.Headers["x-fingerly-signature"]))
+app.MapPost("/webhooks/fingerly", async (HttpRequest request, CancellationToken ct) =>
 {
-    return Results.BadRequest();
-}
+    using var body = new MemoryStream();
+    await request.Body.CopyToAsync(body, ct);
+    byte[] payload = body.ToArray();
 
-WebhookEvent ev = Webhooks.Parse(payload);
-await queue.EnqueueAsync(ev.Id, payload, ct);   // deduplicate on the event ID
+    if (!Webhooks.Verify(secret, payload,
+            request.Headers["x-fingerly-timestamp"],
+            request.Headers["x-fingerly-signature"]))
+    {
+        return Results.BadRequest();
+    }
+
+    WebhookEvent ev = Webhooks.Parse(payload);
+    // Queue ev.Id and payload for processing, deduplicating on ev.Id.
+    return Results.Ok();
+});
 ```
 
 Verify the exact raw bytes before parsing them. Reading the body into a
@@ -157,8 +194,8 @@ valid UTF-8 becomes U+FFFD on the way through, and the digest then never
 matches. Signatures cover the timestamp and body. The default replay tolerance
 is five minutes; persist processed `Id` values to deduplicate deliveries.
 During signing-secret rotation, any matching signature in the comma-separated
-header is accepted. Malformed or missing input is a false result, never an
-exception.
+header is accepted; at most 32 are read. Malformed or missing input is a false
+result, never an exception.
 
 `WebhookEvent.Data` stays a `JsonElement`, so a new event type needs no SDK
 upgrade.
@@ -179,9 +216,20 @@ builder.Services.AddFingerlyProxy(options =>
 {
     options.ProxyKey = builder.Configuration["Fingerly:ProxyKey"]!;
     options.Path = "/k7x2qm4a";
-    options.ClientIp = request => request.Header("CF-Connecting-IP");
+    options.ClientIp = request => request.Header("CF-Connecting-IP") ?? request.RemoteAddress;
 });
 ```
+
+> **`ClientIp` is the one thing you must get right.** Take the header your CDN
+> or load balancer sets when it is there, and the connection's peer address
+> (`RemoteAddress`) otherwise. Trust that header only when traffic can reach
+> your server through nothing but that CDN or load balancer. Never read the
+> left-most `X-Forwarded-For` value: the visitor writes it.
+
+`ClientIp` must return exactly one IPv4 or IPv6 address. Anything else (null,
+empty, a list, a port, a host name, or an exception) is a configuration error:
+the request is refused with a 500 saying "The client IP callback returned no
+valid address", nothing is sent upstream, and the mistake is logged once.
 
 Then mount it, either as a routed endpoint:
 
@@ -198,9 +246,10 @@ app.UseFingerlyProxy();
 
 Prefer the mapped endpoint in a minimal-API application: the path becomes an
 ordinary endpoint, so rate limiting, CORS and output caching apply to it the
-way they apply to everything else. Either way, put it ahead of authentication:
-the browser SDK carries no user, and a policy that redirected it to a sign-in
-page would break identification for every signed-out visitor.
+way they apply to everything else. It is mapped with `AllowAnonymous()`, so a
+fallback authorization policy does not send signed-out visitors to a sign-in
+page: the browser SDK carries no user. Put the middleware ahead of
+`UseAuthentication()` for the same reason.
 
 Then point the browser SDK at the same path:
 
@@ -213,21 +262,35 @@ const fingerly = await load({ apiKey: 'fly_pk_…', endpoints: '/k7x2qm4a' })
 The browser SDK posts both of its calls to that one path, and the proxy
 forwards each to Fingerly's one ingest URL, `https://api.fingerly.io/api/v1/ingest`
 (`ApiVersion` changes the version there and nowhere else). It answers only
-`POST` to the path itself, trailing slashes aside: any other path gets `404`,
-including anything under it, and any other method gets `405`. Event reads need
-a secret key and stay unreachable from a browser by construction.
+`POST` to the path itself, exactly: case-sensitive, and compared with the raw
+request target as the visitor sent it, so a trailing or doubled slash, a dot
+segment or percent encoding is a different path. The middleware passes such a
+request on to your application; the mapped endpoint answers it 404. Anything
+under the path gets the same, and any other method gets `405`. Event reads
+need a secret key and stay unreachable from a browser by construction.
 
 The browser must present a public key from the same environment as the proxy
 key, or the request gets `401`. Bodies over 1 MiB get `413`, enforced
 while reading rather than after buffering. Only the content type, the visitor
 metadata Fingerly needs, and an `Idempotency-Key` are forwarded; customer
-cookies and authorization headers never are. The proxy reports itself upstream
-as `dotnet/0.1.0`, which the dashboard shows per proxy.
+cookies, authorization headers and trace context never are. The proxy reports
+itself upstream as `dotnet/0.1.0`, which the dashboard shows per proxy.
 
 Only `Content-Type`, `X-Request-Id`, `RateLimit-Limit`, `RateLimit-Remaining`
 and `Retry-After` are relayed back, with `Cache-Control: no-store` added. A
 blocker can match a response header by name, so this is an allowlist: nothing
-on the response names Fingerly, whatever the API adds later.
+on the response names Fingerly, whatever the API adds later. The answer is
+read whole before anything is relayed, so a truncated one is never passed on
+as a success.
+
+When the upstream fails, the browser gets `504` ("Gateway timeout") if it did
+not answer within `Timeout` (5 seconds by default), and `502` ("Bad gateway")
+for anything else: refused, reset, truncated, larger than 4 MiB, or
+undecodable. One line is logged per failure, without a stack trace or a key:
+`AddFingerlyProxy` sends it to the application's `ILogger` (category
+`Fingerly.FingerlyProxy`) at warning level, and `FingerlyProxyOptions.Log`
+takes any other sink. A visitor who disconnects cancels the upstream call, and
+the request ends quietly.
 
 The middleware asks `proxy.Handles(path)` before reading anything. It sees
 every request in the pipeline, and calling `HandleAsync` to find out whether
@@ -250,24 +313,22 @@ Setting it in both places is refused, so the two cannot disagree. Use the path
 the dashboard issued rather than one of your own: blockers look for words such
 as `fingerprint`, `tracking` and `analytics`.
 
-> **`ClientIp` is the one thing you must get right.** Resolve it from a header
-> your own infrastructure sets, such as your load balancer's or CDN's. Never
-> read the left-most `X-Forwarded-For` value: the visitor writes it.
-
 ### Outside ASP.NET Core
 
-`FingerlyProxy` speaks to no server API. It reads a `ProxyRequest` and returns
-a `ProxyResponse`, so an isolated-worker Azure Function, a YARP transform or an
-OWIN pipeline can mount it by translating those two shapes. Where that host
-routes only the one path to it, `Path` can stay unset. That is also why the
-core still runs on .NET Standard 2.0.
+`FingerlyProxy` speaks to no server API. It reads a `ProxyRequest` (with
+`RemoteAddress` set to the connection's peer) and returns a `ProxyResponse`,
+so an isolated-worker Azure Function, a YARP transform or an OWIN pipeline can
+mount it by translating those two shapes. Where that host routes only the one
+path to it, `Path` can stay unset. That is also why the core still runs on
+.NET Standard 2.0.
 
 ## Development and release preparation
 
 ```sh
 dotnet build                                   # both target frameworks, warnings as errors
-dotnet test                                    # 157 tests against a real Kestrel server
+dotnet test                                    # against a real Kestrel server
 dotnet pack -c Release -o artifacts
+dotnet publish tools/TrimCheck -c Release -r osx-arm64 -o trimmed && ./trimmed/TrimCheck
 
 FINGERLY_CONTRACT_DIR=../../contract dotnet run --project tools/SyncContract
 ```
@@ -287,10 +348,11 @@ check step. Never put production secrets in fixtures.
 
 ## Source structure
 
-`FingerlyClient` holds the connection and the options; `EventsService` owns the
-reads and the list filters, and `Event`, `EventPage` and `EventListOptions` are
-what they speak in. `Webhooks` verifies signatures. `FingerlyProxy` holds every
-proxy decision, with `ProxyRequest` and `ProxyResponse` as the neutral shapes
-the hosts translate to. `Keys` validates every caller-supplied option before
+`FingerlyClient` holds the options; `EventsService` owns the reads and the list
+filters, and `Event`, `EventPage` and `EventListOptions` are what they speak
+in. `Webhooks` verifies signatures. `FingerlyProxy` holds every proxy decision,
+with `ProxyRequest` and `ProxyResponse` as the neutral shapes the hosts
+translate to. `SharedHttp` is the process-wide connection pool and reads every
+answer within its limit. `Keys` validates every caller-supplied option before
 any network access, and `Json` keeps the serializer context in one place so a
 caller's own `JsonSerializerOptions` cannot change how responses are read.
