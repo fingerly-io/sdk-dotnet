@@ -85,6 +85,7 @@ internal static class ProxyExchange
         {
             Body = context.Request.Body,
             ContentLength = context.Request.ContentLength ?? -1,
+            RemoteAddress = PeerOf(context),
         };
         foreach (KeyValuePair<string, Microsoft.Extensions.Primitives.StringValues> header
             in context.Request.Headers)
@@ -129,6 +130,28 @@ internal static class ProxyExchange
         {
             // The visitor left while the answer was being written.
         }
+    }
+
+    /// <summary>
+    /// The connection's peer as a plain literal: an IPv4-mapped IPv6 address
+    /// as IPv4, and without a zone index.
+    /// </summary>
+    internal static string? PeerOf(HttpContext context)
+    {
+        System.Net.IPAddress? peer = context.Connection.RemoteIpAddress;
+        if (peer is null)
+        {
+            return null;
+        }
+        if (peer.IsIPv4MappedToIPv6)
+        {
+            peer = peer.MapToIPv4();
+        }
+        else if (peer.AddressFamily == System.Net.Sockets.AddressFamily.InterNetworkV6 && peer.ScopeId != 0)
+        {
+            peer = new System.Net.IPAddress(peer.GetAddressBytes());
+        }
+        return peer.ToString();
     }
 
     private static bool CarriesBody(int status) =>

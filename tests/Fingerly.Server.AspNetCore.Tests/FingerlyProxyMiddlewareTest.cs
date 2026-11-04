@@ -270,6 +270,36 @@ public class FingerlyProxyMiddlewareTest
         return site.Client.SendAsync(request);
     }
 
+    [Fact]
+    public async Task GivesTheCallbackThePeerAddress()
+    {
+        await using TestApi upstream = await TestApi.RespondAsync(200, "{}");
+        var seen = new System.Collections.Concurrent.ConcurrentQueue<string?>();
+        using var proxy = new FingerlyProxy(new FingerlyProxyOptions
+        {
+            ProxyKey = ProxyKey,
+            Path = "/k7x2qm4a",
+            Upstream = upstream.Origin,
+            ClientIp = request =>
+            {
+                seen.Enqueue(request.RemoteAddress);
+                return request.RemoteAddress;
+            },
+        });
+        await using TestSite site = await TestSite.StartAsync(app => app.UseFingerlyProxy(proxy));
+
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/k7x2qm4a")
+        {
+            Content = new StringContent("{}", Encoding.UTF8, "application/json"),
+        };
+        request.Headers.TryAddWithoutValidation("X-API-Key", PublicKey);
+        HttpResponseMessage answer = await site.Client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.OK, answer.StatusCode);
+        Assert.Equal("127.0.0.1", Assert.Single(seen));
+        Assert.Equal("127.0.0.1", upstream.Requests[0].Header("X-Fingerly-Client-IP"));
+    }
+
     private static FingerlyProxy Proxy(string upstream, string path) =>
         new(new FingerlyProxyOptions
         {

@@ -163,4 +163,47 @@ internal static class Keys
         Secret => "secret",
         _ => "proxy",
     };
+
+    private static readonly Regex Ipv4Pattern = new(
+        @"\A(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])(\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])){3}\z",
+        RegexOptions.CultureInvariant);
+
+    /// <summary>
+    /// Reports whether a value is exactly one IPv4 or IPv6 address literal.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="System.Net.IPAddress.TryParse(string, out System.Net.IPAddress)"/>
+    /// alone accepts far more: <c>127.1</c>, <c>0x7f.0.0.1</c>, a lone
+    /// number, a zone index. IPv4 is matched strictly, and IPv6 is parsed only
+    /// once it is known to hold nothing but hex digits, colons and dots.
+    /// </remarks>
+    internal static bool IsIpLiteral(string? value)
+    {
+        if (value is null || value.Length == 0 || value.Length > 45)
+        {
+            return false;
+        }
+        if (value.IndexOf(':') < 0)
+        {
+            return Ipv4Pattern.IsMatch(value);
+        }
+        foreach (char c in value)
+        {
+            bool allowed = (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')
+                || (c >= 'A' && c <= 'F') || c == ':' || c == '.';
+            if (!allowed)
+            {
+                return false;
+            }
+        }
+        if (!System.Net.IPAddress.TryParse(value, out System.Net.IPAddress? parsed)
+            || parsed.AddressFamily != System.Net.Sockets.AddressFamily.InterNetworkV6)
+        {
+            return false;
+        }
+        // An embedded IPv4 tail must itself be strict.
+        int lastColon = value.LastIndexOf(':');
+        string tail = value.Substring(lastColon + 1);
+        return tail.IndexOf('.') < 0 || Ipv4Pattern.IsMatch(tail);
+    }
 }

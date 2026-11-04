@@ -46,6 +46,19 @@ public sealed class ProxyRequest
     public long ContentLength { get; set; } = -1;
 
     /// <summary>
+    /// The address of the peer that opened the connection, as the server saw
+    /// it, or null when the host could not tell.
+    /// </summary>
+    /// <remarks>
+    /// This is the visitor only when nothing sits between the visitor and
+    /// your server. Behind a CDN or load balancer it is that hop, and the
+    /// visitor is in a header the hop sets. The ASP.NET Core adapters fill it
+    /// from <c>HttpContext.Connection.RemoteIpAddress</c>, with an
+    /// IPv4-mapped address given as plain IPv4 and any zone index dropped.
+    /// </remarks>
+    public string? RemoteAddress { get; set; }
+
+    /// <summary>
     /// Adds one header. Repeats are joined with <c>", "</c>, as HTTP defines,
     /// so a duplicated header cannot silently drop a value.
     /// </summary>

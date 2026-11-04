@@ -229,6 +229,12 @@ public sealed class FingerlyProxy : IDisposable
             return ProxyResponse.Refusal(401, "Unauthorized");
         }
 
+        string? address = VisitorAddress(request);
+        if (address is null)
+        {
+            return ProxyResponse.Refusal(500, NoClientIp);
+        }
+
         // Refuse on the declared size first; the read below enforces the real one.
         if (request.ContentLength > MaxBodyBytes)
         {
@@ -252,12 +258,7 @@ public sealed class FingerlyProxy : IDisposable
         {
             Content = new ByteArrayContent(body),
         };
-        if (!ApplyUpstreamHeaders(upstream, request, apiKey))
-        {
-            // A ClientIp that could inject a header is a programming error on
-            // the customer's side, not something to forward.
-            return ProxyResponse.Refusal(500, "Internal Server Error");
-        }
+        ApplyUpstreamHeaders(upstream, request, apiKey, address);
 
         using CancellationTokenSource deadline =
             CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -328,6 +329,60 @@ public sealed class FingerlyProxy : IDisposable
     /// </summary>
     public void Dispose() => _httpClient.Dispose();
 
+    /// <summary>The 500 body, and log line, for a ClientIp that returned no address.</summary>
+    internal const string NoClientIp = "The client IP callback returned no valid address";
+
+    /// <summary>Set once the misconfiguration above has been logged in this process.</summary>
+    private static int s_warnedNoClientIp;
+
+    /// <summary>Lets a test see the once-per-process warning again.</summary>
+    internal static void ResetWarnings() => Interlocked.Exchange(ref s_warnedNoClientIp, 0);
+
+    /// <summary>
+    /// Asks <see cref="FingerlyProxyOptions.ClientIp"/> for the visitor's
+    /// address and accepts exactly one IPv4 or IPv6 literal.
+    /// </summary>
+    /// <remarks>
+    /// Anything else (null, empty, a list, a port, a host name, or an
+    /// exception from the callback) is a configuration error rather than a
+    /// visitor: forwarding it would attribute identifications to a wrong or
+    /// missing address. The request is refused with a 500 that says so, and
+    /// the mistake is logged once per process rather than once per request.
+    /// </remarks>
+    /// <returns>The address, or null when the callback gave none usable.</returns>
+    private string? VisitorAddress(ProxyRequest request)
+    {
+        string? address;
+        try
+        {
+            address = _clientIp(request);
+        }
+#pragma warning disable CA1031 // A throwing callback is the same misconfiguration as a null one.
+        catch (Exception)
+#pragma warning restore CA1031
+        {
+            address = null;
+        }
+        if (Keys.IsIpLiteral(address))
+        {
+            return address;
+        }
+        if (Interlocked.Exchange(ref s_warnedNoClientIp, 1) == 0)
+        {
+            try
+            {
+                _log?.Invoke("Fingerly proxy: " + NoClientIp
+                    + "; requests are refused until ClientIp returns one IP address");
+            }
+#pragma warning disable CA1031 // The refusal stands whatever the logger does.
+            catch (Exception)
+#pragma warning restore CA1031
+            {
+            }
+        }
+        return null;
+    }
+
     /// <summary>
     /// Decides which key to present upstream.
     /// </summary>
@@ -360,15 +415,9 @@ public sealed class FingerlyProxy : IDisposable
     /// The visitor writes the origin, user agent and content type, so each is
     /// checked before it is repeated into a header of ours.
     /// </remarks>
-    /// <returns><see langword="false"/> when ClientIp returned something unusable.</returns>
-    private bool ApplyUpstreamHeaders(
-        HttpRequestMessage upstream, ProxyRequest request, string apiKey)
+    private void ApplyUpstreamHeaders(
+        HttpRequestMessage upstream, ProxyRequest request, string apiKey, string address)
     {
-        string? address = _clientIp(request);
-        if (!Keys.IsHeaderSafe(address))
-        {
-            return false;
-        }
 
         string contentType = Safe(request.Header("Content-Type")) ?? "application/json";
         // Content-Type belongs to the content, not the request: setting it on
@@ -392,7 +441,6 @@ public sealed class FingerlyProxy : IDisposable
         {
             upstream.Headers.TryAddWithoutValidation("Idempotency-Key", idempotency);
         }
-        return true;
     }
 
     /// <summary>Drops a visitor-supplied value that could not go in a header.</summary>

@@ -27,12 +27,15 @@ public sealed class FingerlyProxyOptions
     public string? SecretKey { get; set; }
 
     /// <summary>
-    /// Resolves the visitor's address for one request. Required.
+    /// Resolves the visitor's address for one request: exactly one IPv4 or
+    /// IPv6 literal. Required.
     /// </summary>
     /// <remarks>
-    /// Read it from a header your own infrastructure sets, such as your load
-    /// balancer's or CDN's. Never use the left-most <c>X-Forwarded-For</c>
-    /// value: the visitor writes it.
+    /// Behind a CDN or load balancer, read the header it sets, and trust that
+    /// header only when traffic can reach you through nothing else. Without
+    /// one, return <see cref="ProxyRequest.RemoteAddress"/>. Never use the
+    /// left-most <c>X-Forwarded-For</c> value: the visitor writes it.
+    /// Anything but one address refuses the request with a 500.
     /// </remarks>
     public Func<ProxyRequest, string?>? ClientIp { get; set; }
 

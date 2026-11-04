@@ -327,6 +327,117 @@ public class FingerlyProxyTest
         Assert.Empty(upstream.Requests);
     }
 
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData(" ")]
+    [InlineData("null")]
+    [InlineData("unknown")]
+    [InlineData("203.0.113.5, 198.51.100.1")]
+    [InlineData("203.0.113.5:443")]
+    [InlineData("[2001:db8::1]")]
+    [InlineData("fe80::1%eth0")]
+    [InlineData("127.1")]
+    [InlineData("0x7f.0.0.1")]
+    [InlineData("010.0.0.1")]
+    [InlineData("256.1.1.1")]
+    [InlineData("1.2.3")]
+    [InlineData("1")]
+    [InlineData("1:2:3:4:5:6:7:8:9")]
+    [InlineData("1::2::3")]
+    [InlineData("::ffff:1.2.3")]
+    [InlineData("localhost")]
+    [InlineData("203.0.113.5\n")]
+    public async Task RefusesAnythingButOneIpLiteralFromClientIp(string? address)
+    {
+        await using TestApi upstream = await TestApi.RespondAsync(200, "{}");
+        using var proxy = new FingerlyProxy(new FingerlyProxyOptions
+        {
+            ProxyKey = ProxyKey,
+            Path = ProxyPath,
+            Upstream = upstream.Origin,
+            ClientIp = _ => address,
+        });
+        ProxyRequest request = Post(ProxyPath, "{}");
+        request.AddHeader("X-API-Key", PublicKey);
+
+        ProxyResponse result = await proxy.HandleAsync(request);
+
+        Assert.Equal(500, result.Status);
+        Assert.Equal(FingerlyProxy.NoClientIp, Encoding.UTF8.GetString(result.Body.ToArray()));
+        Assert.Equal("no-store", Values(result, "Cache-Control").Single());
+        Assert.Empty(upstream.Requests);
+    }
+
+    [Theory]
+    [InlineData("203.0.113.5")]
+    [InlineData("0.0.0.0")]
+    [InlineData("2001:db8::1")]
+    [InlineData("::1")]
+    [InlineData("::ffff:203.0.113.5")]
+    [InlineData("2001:DB8:0:0:8:800:200C:417A")]
+    public async Task ForwardsEveryIpLiteral(string address)
+    {
+        await using TestApi upstream = await TestApi.RespondAsync(200, "{}");
+        using var proxy = new FingerlyProxy(new FingerlyProxyOptions
+        {
+            ProxyKey = ProxyKey,
+            Path = ProxyPath,
+            Upstream = upstream.Origin,
+            ClientIp = _ => address,
+        });
+        ProxyRequest request = Post(ProxyPath, "{}");
+        request.AddHeader("X-API-Key", PublicKey);
+
+        Assert.Equal(200, (await proxy.HandleAsync(request)).Status);
+        Assert.Equal(address, upstream.Requests[0].Header("X-Fingerly-Client-IP"));
+    }
+
+    [Fact]
+    public async Task RefusesAThrowingClientIpAndLogsTheMistakeOnce()
+    {
+        FingerlyProxy.ResetWarnings();
+        var lines = new List<string>();
+        await using TestApi upstream = await TestApi.RespondAsync(200, "{}");
+        using var proxy = new FingerlyProxy(new FingerlyProxyOptions
+        {
+            ProxyKey = ProxyKey,
+            Path = ProxyPath,
+            Upstream = upstream.Origin,
+            ClientIp = _ => throw new InvalidOperationException("no such header"),
+            Log = lines.Add,
+        });
+
+        for (int i = 0; i < 3; i++)
+        {
+            ProxyRequest request = Post(ProxyPath, "{}");
+            request.AddHeader("X-API-Key", PublicKey);
+            Assert.Equal(500, (await proxy.HandleAsync(request)).Status);
+        }
+
+        Assert.Contains(FingerlyProxy.NoClientIp, Assert.Single(lines), StringComparison.Ordinal);
+        Assert.Empty(upstream.Requests);
+    }
+
+    [Fact]
+    public async Task OffersThePeerAddressToTheCallback()
+    {
+        await using TestApi upstream = await TestApi.RespondAsync(200, "{}");
+        using var proxy = new FingerlyProxy(new FingerlyProxyOptions
+        {
+            ProxyKey = ProxyKey,
+            Path = ProxyPath,
+            Upstream = upstream.Origin,
+            ClientIp = request => request.Header("CF-Connecting-IP") ?? request.RemoteAddress,
+        });
+        ProxyRequest direct = Post(ProxyPath, "{}");
+        direct.AddHeader("X-API-Key", PublicKey);
+        direct.RemoteAddress = "198.51.100.7";
+
+        Assert.Equal(200, (await proxy.HandleAsync(direct)).Status);
+        Assert.Equal("198.51.100.7", upstream.Requests[0].Header("X-Fingerly-Client-IP"));
+    }
+
     [Fact]
     public async Task RefusesAClientIpThatCouldInjectAHeader()
     {
