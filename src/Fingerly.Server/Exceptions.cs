@@ -46,13 +46,15 @@ public class FingerlyException : Exception
 /// </remarks>
 public class FingerlyApiException : FingerlyException
 {
-    internal FingerlyApiException(int status, string? code, JsonElement? details, string? requestId)
+    internal FingerlyApiException(
+        int status, string? code, JsonElement? details, string? requestId, int? retryAfter = null)
         : base(Describe(status, code))
     {
         Status = status;
         Code = code;
         Details = details;
         RequestId = requestId;
+        RetryAfter = retryAfter;
     }
 
     /// <summary>Creates an exception for a status the API reported.</summary>
@@ -91,6 +93,16 @@ public class FingerlyApiException : FingerlyException
     /// request id that was never issued rather than one that has not landed.
     /// </remarks>
     public bool IsEventNotFound => Status == 404 && Code == "event_not_found";
+
+    /// <summary>
+    /// The seconds the API asked you to wait before trying again, from
+    /// <c>Retry-After</c> (an HTTP date becomes seconds from now), or null
+    /// when it sent none.
+    /// </summary>
+    /// <remarks>
+    /// The SDK never retries by itself; a 429 carries this so you can.
+    /// </remarks>
+    public int? RetryAfter { get; }
 
     private static string Describe(int status, string? code)
     {

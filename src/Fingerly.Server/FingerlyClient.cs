@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Linq;
 using System.Net;
 using System.Net.Http;
 using System.Text.Json;
@@ -185,7 +186,7 @@ public sealed class FingerlyClient : IDisposable
             byte[] body = await SharedHttp.ReadBodyAsync(response, deadline.Token).ConfigureAwait(false);
             if ((int)response.StatusCode < 200 || (int)response.StatusCode > 299)
             {
-                throw ApiError((int)response.StatusCode, body);
+                throw ApiError((int)response.StatusCode, body, response);
             }
             return body;
         }
@@ -226,11 +227,17 @@ public sealed class FingerlyClient : IDisposable
     /// Only the status and the structured fields the API documents are
     /// surfaced. The raw body is deliberately dropped rather than echoed.
     /// </remarks>
-    private FingerlyApiException ApiError(int status, byte[] body)
+    private FingerlyApiException ApiError(int status, byte[] body, HttpResponseMessage response)
     {
+        int? retryAfter = RetryAfterSeconds(response);
+        string? headerRequestId = response.Headers.TryGetValues("X-Request-Id", out var ids)
+            ? ids.FirstOrDefault(Keys.IsHeaderSafe)
+            : null;
+        headerRequestId = RedactOrNull(headerRequestId);
+
         if (body.Length == 0 || body.Length > MaxErrorBody)
         {
-            return new FingerlyApiException(status, null, null, null);
+            return new FingerlyApiException(status, null, null, headerRequestId, retryAfter);
         }
 
         ApiErrorEnvelope envelope;
@@ -240,8 +247,9 @@ public sealed class FingerlyClient : IDisposable
         }
         catch (FingerlyException)
         {
-            // A non-JSON body still reports its HTTP status.
-            return new FingerlyApiException(status, null, null, null);
+            // A non-JSON body still reports its HTTP status, and nothing of
+            // what it said.
+            return new FingerlyApiException(status, null, null, headerRequestId, retryAfter);
         }
 
         JsonElement? details = null;
@@ -250,7 +258,30 @@ public sealed class FingerlyClient : IDisposable
             details = Json.Reparse(Redact(raw.GetRawText()));
         }
         return new FingerlyApiException(
-            status, RedactOrNull(envelope.Error?.Code), details, RedactOrNull(envelope.RequestId));
+            status,
+            RedactOrNull(envelope.Error?.Code),
+            details,
+            RedactOrNull(envelope.RequestId) ?? headerRequestId,
+            retryAfter);
+    }
+
+    /// <summary>
+    /// Parses <c>Retry-After</c>: delta-seconds, or an HTTP date turned into
+    /// seconds from now, never negative.
+    /// </summary>
+    internal static int? RetryAfterSeconds(HttpResponseMessage response)
+    {
+        System.Net.Http.Headers.RetryConditionHeaderValue? header = response.Headers.RetryAfter;
+        if (header?.Delta is TimeSpan delta)
+        {
+            return (int)Math.Min(int.MaxValue, Math.Max(0, delta.TotalSeconds));
+        }
+        if (header?.Date is DateTimeOffset date)
+        {
+            double seconds = (date - DateTimeOffset.UtcNow).TotalSeconds;
+            return (int)Math.Min(int.MaxValue, Math.Max(0, Math.Ceiling(seconds)));
+        }
+        return null;
     }
 
     /// <summary>Strips the secret key from anything an error may carry to logs.</summary>

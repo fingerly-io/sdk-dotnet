@@ -71,10 +71,11 @@ internal static class Json
             using JsonDocument document = JsonDocument.Parse(body);
             return document.RootElement.Clone();
         }
-        catch (JsonException cause)
+        catch (JsonException)
         {
-            throw new FingerlyException(
-                "Fingerly API returned a body that is not JSON", cause);
+            // The parser's message can quote the offending text; drop it
+            // rather than echo any of the body.
+            throw new FingerlyException("Fingerly API returned a body that is not JSON");
         }
     }
 
@@ -89,10 +90,11 @@ internal static class Json
         {
             value = JsonSerializer.Deserialize(body, typeInfo);
         }
-        catch (JsonException cause)
+        catch (Exception cause) when (cause is JsonException || cause is NotSupportedException
+            || cause is InvalidOperationException || cause is FormatException)
         {
-            throw new FingerlyException(
-                "Fingerly API returned an unexpected " + typeof(T).Name, cause);
+            // As above: the binder's message can quote a value.
+            throw new FingerlyException("Fingerly API returned an unexpected " + typeof(T).Name);
         }
         return value ?? throw new FingerlyException(
             "Fingerly API returned an unexpected " + typeof(T).Name);

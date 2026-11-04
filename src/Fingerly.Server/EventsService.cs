@@ -27,7 +27,7 @@ public sealed class EventsService
     /// <param name="requestId">The <c>request_id</c> returned by identification.</param>
     /// <param name="cancellationToken">Cancels the call.</param>
     /// <returns>The stored event.</returns>
-    /// <exception cref="ArgumentException"><paramref name="requestId"/> is empty.</exception>
+    /// <exception cref="ArgumentException"><paramref name="requestId"/> is empty, "." or "..".</exception>
     /// <exception cref="FingerlyApiException">
     /// Any non-2xx response. An event is readable as soon as identification
     /// answers, so <c>404 event_not_found</c> means a request id that was
@@ -37,8 +37,10 @@ public sealed class EventsService
     /// <exception cref="OperationCanceledException"><paramref name="cancellationToken"/> was cancelled.</exception>
     public async Task<Event> GetAsync(string requestId, CancellationToken cancellationToken = default)
     {
-        if (string.IsNullOrEmpty(requestId))
+        if (string.IsNullOrEmpty(requestId) || requestId == "." || requestId == "..")
         {
+            // "." and ".." would be dot segments in the URL, read as
+            // ".../events" or ".../" rather than as an id.
             throw new ArgumentException("requestId is required", nameof(requestId));
         }
 

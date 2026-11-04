@@ -344,4 +344,92 @@ public class FingerlyClientTest
         await Assert.ThrowsAsync<FingerlyTimeoutException>(() => fingerly.Events.GetAsync("r1"));
         Assert.True(watch.ElapsedMilliseconds < 2000, $"took {watch.ElapsedMilliseconds} ms");
     }
+
+    [Fact]
+    public async Task CarriesRetryAfterAndTheRequestIdOnAnApiError()
+    {
+        await using TestApi api = await TestApi.StartAsync(async context =>
+        {
+            context.Response.StatusCode = 429;
+            context.Response.Headers.RetryAfter = "7";
+            context.Response.Headers["X-Request-Id"] = "from-header";
+            context.Response.ContentType = "application/json";
+            await context.Response.WriteAsync("""{"error":{"code":"rate_limited"}}""");
+        });
+        using var fingerly = new FingerlyClient(new FingerlyOptions { SecretKey = SecretKey, Endpoint = api.Origin });
+
+        FingerlyApiException failure = await Assert.ThrowsAsync<FingerlyApiException>(
+            () => fingerly.Events.GetAsync("r1"));
+
+        Assert.Equal(429, failure.Status);
+        Assert.Equal("rate_limited", failure.Code);
+        Assert.Equal(7, failure.RetryAfter);
+        Assert.Equal("from-header", failure.RequestId);
+        Assert.Single(api.Requests); // reads never retry, not even a 429
+    }
+
+    [Fact]
+    public async Task ReadsRetryAfterAsAnHttpDate()
+    {
+        await using TestApi api = await TestApi.StartAsync(context =>
+        {
+            context.Response.StatusCode = 503;
+            context.Response.Headers.RetryAfter = DateTimeOffset.UtcNow.AddSeconds(90).ToString("R");
+            return Task.CompletedTask;
+        });
+        using var fingerly = new FingerlyClient(new FingerlyOptions { SecretKey = SecretKey, Endpoint = api.Origin });
+
+        FingerlyApiException failure = await Assert.ThrowsAsync<FingerlyApiException>(
+            () => fingerly.Events.GetAsync("r1"));
+
+        Assert.InRange(failure.RetryAfter!.Value, 85, 91);
+        Assert.Null(failure.Code);
+    }
+
+    [Fact]
+    public async Task TreatsARedirectAsAnApiErrorWithItsMetadata()
+    {
+        await using TestApi api = await TestApi.StartAsync(context =>
+        {
+            context.Response.StatusCode = 301;
+            context.Response.Headers.Location = "https://elsewhere.example/";
+            context.Response.Headers["X-Request-Id"] = "moved";
+            return Task.CompletedTask;
+        });
+        using var fingerly = new FingerlyClient(new FingerlyOptions { SecretKey = SecretKey, Endpoint = api.Origin });
+
+        FingerlyApiException failure = await Assert.ThrowsAsync<FingerlyApiException>(
+            () => fingerly.Events.GetAsync("r1"));
+
+        Assert.Equal(301, failure.Status);
+        Assert.Equal("moved", failure.RequestId);
+        Assert.Null(failure.RetryAfter);
+    }
+
+    [Theory]
+    [InlineData("""{"request_id": PRIVATE-CONTENT-7f3a}""")]
+    [InlineData("""{"request_id":"r1","occurred_at":"PRIVATE-CONTENT-7f3a"}""")]
+    public async Task NeverEchoesAnInvalidSuccessBody(string body)
+    {
+        await using TestApi api = await TestApi.RespondAsync(200, body);
+        using var fingerly = new FingerlyClient(new FingerlyOptions { SecretKey = SecretKey, Endpoint = api.Origin });
+
+        FingerlyException failure = await Assert.ThrowsAsync<FingerlyException>(
+            () => fingerly.Events.GetAsync("r1"));
+
+        Assert.DoesNotContain("PRIVATE-CONTENT", failure.ToString(), StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData(".")]
+    [InlineData("..")]
+    [InlineData("")]
+    public async Task RefusesARequestIdThatIsNotOne(string requestId)
+    {
+        await using TestApi api = await TestApi.RespondAsync(200, EventJson);
+        using var fingerly = new FingerlyClient(new FingerlyOptions { SecretKey = SecretKey, Endpoint = api.Origin });
+
+        await Assert.ThrowsAsync<ArgumentException>(() => fingerly.Events.GetAsync(requestId));
+        Assert.Empty(api.Requests);
+    }
 }
