@@ -51,7 +51,10 @@ public sealed class FingerlyOptions
     /// it. Give it <c>AllowAutoRedirect = false</c>. A handler that follows
     /// redirects would replay the secret key to another host, and the client
     /// refuses a response that arrived from a URL other than the one it asked
-    /// for.
+    /// for. Give it <c>UseCookies = false</c> too, and on .NET
+    /// <c>ActivityHeadersPropagator = DistributedContextPropagator.CreateNoOutputPropagator()</c>,
+    /// as the shared pool used without one has. Left unset, every client and
+    /// proxy in the process shares one pool.
     /// </remarks>
     public HttpMessageHandler? Handler { get; set; }
 }

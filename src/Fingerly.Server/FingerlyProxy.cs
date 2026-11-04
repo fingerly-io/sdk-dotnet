@@ -71,13 +71,6 @@ public sealed class FingerlyProxy : IDisposable
     private readonly Func<ProxyRequest, string?> _clientIp;
     private readonly HttpClient _httpClient;
 
-#if NET
-    private const DecompressionMethods Decompression = DecompressionMethods.All;
-#else
-    private const DecompressionMethods Decompression =
-        DecompressionMethods.GZip | DecompressionMethods.Deflate;
-#endif
-
     /// <summary>
     /// Builds the proxy, validating every option first.
     /// </summary>
@@ -275,7 +268,10 @@ public sealed class FingerlyProxy : IDisposable
         }
     }
 
-    /// <summary>Releases the connection the proxy opened.</summary>
+    /// <summary>
+    /// Releases this proxy's client. The connection pool is shared, or the
+    /// caller's, and stays open.
+    /// </summary>
     public void Dispose() => _httpClient.Dispose();
 
     /// <summary>
@@ -405,42 +401,17 @@ public sealed class FingerlyProxy : IDisposable
     }
 
     /// <summary>
-    /// Builds the client for the upstream call.
+    /// Builds the client for the upstream call: over the caller's handler, or
+    /// the process-wide <see cref="SharedHttp"/> pool.
     /// </summary>
     /// <remarks>
-    /// <para>
-    /// Redirects are never followed: a redirect would replay the proxy key to
-    /// another host. The deadline is applied per request, not through
-    /// <see cref="HttpClient.Timeout"/>.
-    /// </para>
-    /// <para>
-    /// Automatic decompression is what makes stripping <c>Content-Encoding</c>
-    /// from the relayed response honest. .NET neither asks for a compressed
-    /// body nor decodes one unless told to, so a proxy that dropped the header
-    /// without this would hand the browser compressed bytes labelled as plain.
     /// A handler supplied through <see cref="FingerlyProxyOptions.Handler"/>
-    /// should turn it on for the same reason.
-    /// </para>
+    /// should match the shared one: <c>AllowAutoRedirect = false</c>,
+    /// <c>UseCookies = false</c>, automatic decompression, and no trace
+    /// propagation.
     /// </remarks>
-    private static HttpClient CreateHttpClient(HttpMessageHandler? handler)
-    {
-        bool supplied = handler is not null;
-#if NET
-        handler ??= new SocketsHttpHandler
-        {
-            AllowAutoRedirect = false,
-            AutomaticDecompression = Decompression,
-            PooledConnectionLifetime = TimeSpan.FromMinutes(2),
-        };
-#else
-        handler ??= new HttpClientHandler
-        {
-            AllowAutoRedirect = false,
-            AutomaticDecompression = Decompression,
-        };
-#endif
-        return new HttpClient(handler, disposeHandler: !supplied);
-    }
+    private static HttpClient CreateHttpClient(HttpMessageHandler? handler) =>
+        SharedHttp.CreateClient(handler);
 
     /// <summary>
     /// Validates the path the dashboard issued and drops trailing slashes.

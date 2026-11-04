@@ -19,6 +19,9 @@ namespace Fingerly.Tests;
 internal sealed record RecordedRequest(
     string Method, string Path, string QueryString, IReadOnlyDictionary<string, string> Headers, byte[] Body)
 {
+    /// <summary>The client's port, which tells one connection from another.</summary>
+    internal int RemotePort { get; init; }
+
     internal string? Header(string name) =>
         Headers.TryGetValue(name, out string? value) ? value : null;
 
@@ -68,7 +71,10 @@ internal sealed class TestApi : IAsyncDisposable
                 context.Request.QueryString.Value ?? string.Empty,
                 context.Request.Headers.ToDictionary(
                     header => header.Key, header => header.Value.ToString(), StringComparer.OrdinalIgnoreCase),
-                body.ToArray()));
+                body.ToArray())
+            {
+                RemotePort = context.Connection.RemotePort,
+            });
             await handler(context);
         });
 

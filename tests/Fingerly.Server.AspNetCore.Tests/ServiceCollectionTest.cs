@@ -38,6 +38,51 @@ public class ServiceCollectionTest
     }
 
     /// <summary>
+    /// The factory's handler is configured like the shared pool: no cookie
+    /// jar, and no trace context or baggage copied from the application.
+    /// </summary>
+    [Fact]
+    public async Task AddFingerlyKeepsNoCookiesAndPropagatesNoTraceContext()
+    {
+        using var listener = new System.Diagnostics.ActivityListener
+        {
+            ShouldListenTo = _ => true,
+            Sample = (ref System.Diagnostics.ActivityCreationOptions<System.Diagnostics.ActivityContext> _) =>
+                System.Diagnostics.ActivitySamplingResult.AllDataAndRecorded,
+        };
+        System.Diagnostics.ActivitySource.AddActivityListener(listener);
+        using var source = new System.Diagnostics.ActivitySource("Fingerly.AspNetCore.Tests");
+        using System.Diagnostics.Activity? activity = source.StartActivity("read");
+        activity?.AddBaggage("tenant", "acme");
+
+        await using TestApi api = await TestApi.StartAsync(async context =>
+        {
+            context.Response.Headers.Append("Set-Cookie", "upstream=one; Path=/");
+            context.Response.ContentType = "application/json";
+            await context.Response.WriteAsync("""{"request_id":"r1","visitor_id":"v1"}""");
+        });
+        var services = new ServiceCollection();
+        services.AddFingerly(options =>
+        {
+            options.SecretKey = SecretKey;
+            options.Endpoint = api.Origin;
+        });
+        await using ServiceProvider provider = services.BuildServiceProvider();
+
+        for (int i = 0; i < 2; i++)
+        {
+            await provider.GetRequiredService<FingerlyClient>().Events.GetAsync("r1");
+        }
+
+        Assert.All(api.Requests, sent =>
+        {
+            Assert.Null(sent.Header("Cookie"));
+            Assert.Null(sent.Header("traceparent"));
+            Assert.Null(sent.Header("baggage"));
+        });
+    }
+
+    /// <summary>
     /// The registration configures the primary handler, so a redirect cannot
     /// replay the secret key to another host even though the client itself
     /// came from the factory.

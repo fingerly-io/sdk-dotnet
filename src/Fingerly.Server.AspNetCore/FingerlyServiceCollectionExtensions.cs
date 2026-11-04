@@ -51,10 +51,10 @@ public static class FingerlyServiceCollectionExtensions
         services.Configure(configure);
         return services
             .AddHttpClient(nameof(FingerlyClient))
-            .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
-            {
-                AllowAutoRedirect = false,
-            })
+            // The same configuration as the shared pool: no redirects, no
+            // cookie jar, no trace or baggage propagation. The factory
+            // recycles it, which keeps DNS fresh.
+            .ConfigurePrimaryHttpMessageHandler(SharedHttp.CreateHandler)
             .AddTypedClient((httpClient, provider) => new FingerlyClient(
                 provider.GetRequiredService<IOptions<FingerlyOptions>>().Value, httpClient));
     }

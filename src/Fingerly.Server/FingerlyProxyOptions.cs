@@ -67,6 +67,10 @@ public sealed class FingerlyProxyOptions
     /// </summary>
     /// <remarks>
     /// The handler is not disposed with the proxy: whoever created it owns it.
+    /// Configure it like the shared pool used without one:
+    /// <c>AllowAutoRedirect = false</c>, <c>UseCookies = false</c>, automatic
+    /// decompression, and on .NET
+    /// <c>ActivityHeadersPropagator = DistributedContextPropagator.CreateNoOutputPropagator()</c>.
     /// </remarks>
     public HttpMessageHandler? Handler { get; set; }
 }

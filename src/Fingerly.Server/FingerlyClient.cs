@@ -46,13 +46,6 @@ public sealed class FingerlyClient : IDisposable
     private readonly HttpClient _httpClient;
     private readonly bool _ownsHttpClient;
 
-#if NET
-    private const DecompressionMethods Decompression = DecompressionMethods.All;
-#else
-    private const DecompressionMethods Decompression =
-        DecompressionMethods.GZip | DecompressionMethods.Deflate;
-#endif
-
     /// <summary>
     /// Creates a client for a secret key, with every other setting defaulted.
     /// </summary>
@@ -143,38 +136,16 @@ public sealed class FingerlyClient : IDisposable
     }
 
     /// <summary>
-    /// Builds the client this instance owns.
+    /// Builds the client this instance owns, over the caller's handler or the
+    /// process-wide <see cref="SharedHttp"/> pool: no redirects, no cookie
+    /// jar, no trace propagation, compressed answers decoded, and connections
+    /// recycled every two minutes so DNS changes are picked up.
     /// </summary>
-    /// <remarks>
-    /// Redirects are never followed, so an authenticated request cannot be
-    /// replayed to another host. Compressed responses are decoded here rather
-    /// than left to the caller, because .NET asks for none and decodes none
-    /// unless told to. On .NET the connections are recycled every two minutes
-    /// as well, because a handler kept for the life of the process otherwise
-    /// pins whatever DNS answered first.
-    /// </remarks>
     private static HttpClient CreateHttpClient(HttpMessageHandler? handler)
     {
-        bool supplied = handler is not null;
-#if NET
-        handler ??= new SocketsHttpHandler
-        {
-            AllowAutoRedirect = false,
-            AutomaticDecompression = Decompression,
-            PooledConnectionLifetime = TimeSpan.FromMinutes(2),
-        };
-#else
-        handler ??= new HttpClientHandler
-        {
-            AllowAutoRedirect = false,
-            AutomaticDecompression = Decompression,
-        };
-#endif
-        // A handler the caller supplied belongs to the caller.
-        return new HttpClient(handler, disposeHandler: !supplied)
-        {
-            MaxResponseContentBufferSize = MaxResponseBytes,
-        };
+        HttpClient client = SharedHttp.CreateClient(handler);
+        client.MaxResponseContentBufferSize = MaxResponseBytes;
+        return client;
     }
 
     /// <summary>
