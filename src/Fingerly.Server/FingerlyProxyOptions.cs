@@ -1,5 +1,6 @@
 using System;
 using System.Net.Http;
+using System.Text.Json.Serialization;
 
 namespace Fingerly;
 
@@ -17,6 +18,7 @@ public sealed class FingerlyProxyOptions
     /// A write-only credential, <c>fly_px_…</c>, held only on your server.
     /// Required.
     /// </summary>
+    [JsonIgnore]
     public string? ProxyKey { get; set; }
 
     /// <summary>
@@ -24,6 +26,7 @@ public sealed class FingerlyProxyOptions
     /// will be refused in the next major version; do not set both.
     /// </summary>
     [Obsolete("Use ProxyKey. Secret read keys will be refused in the next major version.")]
+    [JsonIgnore]
     public string? SecretKey { get; set; }
 
     /// <summary>
@@ -37,6 +40,7 @@ public sealed class FingerlyProxyOptions
     /// left-most <c>X-Forwarded-For</c> value: the visitor writes it.
     /// Anything but one address refuses the request with a 500.
     /// </remarks>
+    [JsonIgnore]
     public Func<ProxyRequest, string?>? ClientIp { get; set; }
 
     /// <summary>
@@ -75,6 +79,7 @@ public sealed class FingerlyProxyOptions
     /// decompression, and on .NET
     /// <c>ActivityHeadersPropagator = DistributedContextPropagator.CreateNoOutputPropagator()</c>.
     /// </remarks>
+    [JsonIgnore]
     public HttpMessageHandler? Handler { get; set; }
 
     /// <summary>
@@ -86,5 +91,18 @@ public sealed class FingerlyProxyOptions
     /// <c>ILogger</c> at warning level when it is left unset. A hook that
     /// throws is ignored.
     /// </remarks>
+    [JsonIgnore]
     public Action<string>? Log { get; set; }
+
+    /// <summary>Names the path and upstream; no key is ever included.</summary>
+    /// <returns>A description safe to log.</returns>
+    public override string ToString()
+    {
+#pragma warning disable CS0618 // The deprecated key is still redacted.
+        string? secretKey = SecretKey;
+#pragma warning restore CS0618
+        return "FingerlyProxyOptions { Path = " + (Path ?? "(routed)") + ", Upstream = "
+            + (Upstream ?? "(default)") + ", ProxyKey = " + (string.IsNullOrEmpty(ProxyKey) ? "(unset)" : "[redacted]")
+            + ", SecretKey = " + (string.IsNullOrEmpty(secretKey) ? "(unset)" : "[redacted]") + " }";
+    }
 }

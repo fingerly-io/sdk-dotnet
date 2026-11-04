@@ -151,6 +151,12 @@ public sealed class FingerlyProxy : IDisposable
     /// </remarks>
     public string? Path => _path;
 
+    /// <summary>Names the path and upstream; no key is ever included.</summary>
+    /// <returns>A description safe to log.</returns>
+    public override string ToString() =>
+        "FingerlyProxy { Path = " + (_path ?? "(routed)") + ", Upstream = " + _upstreamUrl
+        + ", " + (_usesProxyKey ? "ProxyKey" : "SecretKey") + " = [redacted] }";
+
     /// <summary>
     /// Reports whether a path is one this proxy serves.
     /// </summary>

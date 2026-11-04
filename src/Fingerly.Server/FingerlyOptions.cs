@@ -1,5 +1,6 @@
 using System;
 using System.Net.Http;
+using System.Text.Json.Serialization;
 
 namespace Fingerly;
 
@@ -17,6 +18,7 @@ public sealed class FingerlyOptions
     /// A server-only key, <c>fly_sk_{environment}_…</c>, whose prefix names
     /// the environment read. Required.
     /// </summary>
+    [JsonIgnore]
     public string SecretKey { get; set; } = string.Empty;
 
     /// <summary>
@@ -56,5 +58,12 @@ public sealed class FingerlyOptions
     /// as the shared pool used without one has. Left unset, every client and
     /// proxy in the process shares one pool.
     /// </remarks>
+    [JsonIgnore]
     public HttpMessageHandler? Handler { get; set; }
+
+    /// <summary>Names the endpoint; the secret key is never included.</summary>
+    /// <returns>A description safe to log.</returns>
+    public override string ToString() =>
+        "FingerlyOptions { Endpoint = " + (Endpoint ?? "(default)") + ", SecretKey = "
+        + (string.IsNullOrEmpty(SecretKey) ? "(unset)" : "[redacted]") + " }";
 }

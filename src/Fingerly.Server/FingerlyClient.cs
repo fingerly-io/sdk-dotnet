@@ -119,6 +119,10 @@ public sealed class FingerlyClient : IDisposable
     /// <summary>Event reads under this client's secret key.</summary>
     public EventsService Events { get; }
 
+    /// <summary>Names the API; the secret key is never included.</summary>
+    /// <returns>A description safe to log.</returns>
+    public override string ToString() => "FingerlyClient { BaseUri = " + _baseUri + ", SecretKey = [redacted] }";
+
     /// <summary>
     /// Releases the connection, when this instance opened one.
     /// </summary>

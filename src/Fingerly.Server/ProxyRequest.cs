@@ -80,4 +80,17 @@ public sealed class ProxyRequest
     /// <returns>The value, or null when the request carried none.</returns>
     public string? Header(string name) =>
         name is not null && _headers.TryGetValue(name, out string? value) ? value : null;
+
+    /// <summary>
+    /// Method, path, peer and header names. Header values are left out: the
+    /// browser's key, cookies and authorization travel in them.
+    /// </summary>
+    /// <returns>A description safe to log.</returns>
+    public override string ToString()
+    {
+        var names = new List<string>(_headers.Keys);
+        names.Sort(StringComparer.OrdinalIgnoreCase);
+        return "ProxyRequest { " + Method + " " + Path + ", RemoteAddress = " + (RemoteAddress ?? "(unknown)")
+            + ", Headers = [" + string.Join(", ", names) + "] }";
+    }
 }
