@@ -7,6 +7,7 @@ using Fingerly.Tests;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Xunit;
 
 namespace Fingerly.AspNetCore.Tests;
@@ -203,5 +204,58 @@ public class ServiceCollectionTest
         Assert.Throws<ArgumentNullException>(() => services.AddFingerlyProxy(null!));
         Assert.Throws<ArgumentNullException>(
             () => ((IServiceCollection)null!).AddFingerly(_ => { }));
+    }
+
+    [Fact]
+    public async Task AddFingerlyProxyLogsOneWarningPerUpstreamFailure()
+    {
+        var sink = new CapturingLoggerProvider();
+        var services = new ServiceCollection();
+        services.AddLogging(logging => logging.AddProvider(sink));
+        services.AddFingerlyProxy(options =>
+        {
+            options.ProxyKey = ProxyKey;
+            options.Path = "/k7x2qm4a";
+            options.Upstream = "http://127.0.0.1:9";
+            options.ClientIp = _ => "203.0.113.7";
+        });
+        await using ServiceProvider provider = services.BuildServiceProvider();
+        FingerlyProxy proxy = provider.GetRequiredService<FingerlyProxy>();
+
+        var request = new ProxyRequest("POST", "/k7x2qm4a") { Body = new System.IO.MemoryStream(Encoding.UTF8.GetBytes("{}")) };
+        request.AddHeader("X-API-Key", PublicKey);
+        ProxyResponse answer = await proxy.HandleAsync(request);
+
+        Assert.Equal(502, answer.Status);
+        (Microsoft.Extensions.Logging.LogLevel level, string message) = Assert.Single(sink.Entries);
+        Assert.Equal(Microsoft.Extensions.Logging.LogLevel.Warning, level);
+        Assert.DoesNotContain(ProxyKey, message, StringComparison.Ordinal);
+        Assert.DoesNotContain("\n", message, StringComparison.Ordinal);
+    }
+
+    private sealed class CapturingLoggerProvider : Microsoft.Extensions.Logging.ILoggerProvider
+    {
+        internal System.Collections.Concurrent.ConcurrentQueue<(Microsoft.Extensions.Logging.LogLevel, string)> Entries { get; } = new();
+
+        public Microsoft.Extensions.Logging.ILogger CreateLogger(string categoryName) => new Logger(this);
+
+        public void Dispose()
+        {
+        }
+
+        private sealed class Logger : Microsoft.Extensions.Logging.ILogger
+        {
+            private readonly CapturingLoggerProvider _owner;
+
+            internal Logger(CapturingLoggerProvider owner) => _owner = owner;
+
+            public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
+            public bool IsEnabled(Microsoft.Extensions.Logging.LogLevel logLevel) => true;
+
+            public void Log<TState>(Microsoft.Extensions.Logging.LogLevel logLevel, Microsoft.Extensions.Logging.EventId eventId,
+                TState state, Exception? exception, Func<TState, Exception?, string> formatter) =>
+                _owner.Entries.Enqueue((logLevel, formatter(state, exception)));
+        }
     }
 }

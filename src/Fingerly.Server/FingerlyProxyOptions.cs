@@ -73,4 +73,15 @@ public sealed class FingerlyProxyOptions
     /// <c>ActivityHeadersPropagator = DistributedContextPropagator.CreateNoOutputPropagator()</c>.
     /// </remarks>
     public HttpMessageHandler? Handler { get; set; }
+
+    /// <summary>
+    /// Receives one line per upstream failure, without a stack trace or a
+    /// key.
+    /// </summary>
+    /// <remarks>
+    /// <c>AddFingerlyProxy</c> fills this with the application's
+    /// <c>ILogger</c> at warning level when it is left unset. A hook that
+    /// throws is ignored.
+    /// </remarks>
+    public Action<string>? Log { get; set; }
 }

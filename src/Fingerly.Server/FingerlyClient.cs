@@ -1,4 +1,5 @@
 using System;
+using System.IO;
 using System.Net;
 using System.Net.Http;
 using System.Text.Json;
@@ -36,9 +37,6 @@ public sealed class FingerlyClient : IDisposable
 
     /// <summary>An error body is small; anything larger is not one worth reading.</summary>
     private const int MaxErrorBody = 1 << 20;
-
-    /// <summary>A bound on a response we buffer, for a client we own.</summary>
-    private const int MaxResponseBytes = 16 << 20;
 
     private readonly string _secretKey;
     private readonly Uri _baseUri;
@@ -141,20 +139,16 @@ public sealed class FingerlyClient : IDisposable
     /// jar, no trace propagation, compressed answers decoded, and connections
     /// recycled every two minutes so DNS changes are picked up.
     /// </summary>
-    private static HttpClient CreateHttpClient(HttpMessageHandler? handler)
-    {
-        HttpClient client = SharedHttp.CreateClient(handler);
-        client.MaxResponseContentBufferSize = MaxResponseBytes;
-        return client;
-    }
+    private static HttpClient CreateHttpClient(HttpMessageHandler? handler) =>
+        SharedHttp.CreateClient(handler);
 
     /// <summary>
     /// Performs one authenticated GET and returns the body.
     /// </summary>
     /// <remarks>
-    /// Never retries. The deadline covers receiving the body, because the
-    /// response is sent with <see cref="HttpCompletionOption.ResponseContentRead"/>
-    /// and the linked token governs that read as well as the request.
+    /// Never retries. One deadline covers the whole exchange, receiving the
+    /// body included, and the body is read within
+    /// <see cref="SharedHttp.ResponseLimit"/> whatever client sends it.
     /// </remarks>
     internal async Task<byte[]> GetAsync(string path, CancellationToken cancellationToken)
     {
@@ -168,28 +162,14 @@ public sealed class FingerlyClient : IDisposable
             CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         deadline.CancelAfter(_timeout);
 
-        HttpResponseMessage response;
         try
         {
-            response = await _httpClient
-                .SendAsync(request, HttpCompletionOption.ResponseContentRead, deadline.Token)
+            // Headers, then the body, both under the one deadline and the body
+            // within the limit, so a trickling answer cannot outlast it.
+            using HttpResponseMessage response = await _httpClient
+                .SendAsync(request, HttpCompletionOption.ResponseHeadersRead, deadline.Token)
                 .ConfigureAwait(false);
-        }
-        catch (OperationCanceledException cause) when (!cancellationToken.IsCancellationRequested)
-        {
-            // Either our deadline or the HttpClient's own timeout. A token the
-            // caller cancelled falls through as OperationCanceledException,
-            // which is what a caller who cancelled expects to catch.
-            throw new FingerlyTimeoutException("The Fingerly request timed out", cause);
-        }
-        catch (HttpRequestException cause)
-        {
-            throw new FingerlyConnectionException(
-                "Could not reach the Fingerly API", Redact(cause));
-        }
 
-        using (response)
-        {
             // A handler the caller configured may still follow redirects. The
             // key has already left the process by then, so this cannot undo
             // the leak; refusing the answer at least stops another host's
@@ -202,28 +182,38 @@ public sealed class FingerlyClient : IDisposable
                     + "handler with AllowAutoRedirect = false.");
             }
 
-            byte[] body = await ReadBodyAsync(response, cancellationToken).ConfigureAwait(false);
+            byte[] body = await SharedHttp.ReadBodyAsync(response, deadline.Token).ConfigureAwait(false);
             if ((int)response.StatusCode < 200 || (int)response.StatusCode > 299)
             {
                 throw ApiError((int)response.StatusCode, body);
             }
             return body;
         }
-    }
-
-    private static async Task<byte[]> ReadBodyAsync(
-        HttpResponseMessage response, CancellationToken cancellationToken)
-    {
-        try
+        catch (FingerlyException)
         {
-#if NET
-            return await response.Content.ReadAsByteArrayAsync(cancellationToken)
-                .ConfigureAwait(false);
-#else
-            return await response.Content.ReadAsByteArrayAsync().ConfigureAwait(false);
-#endif
+            throw;
+        }
+        catch (Exception cause) when (cancellationToken.IsCancellationRequested)
+        {
+            // A token the caller cancelled surfaces as the cancellation the
+            // caller expects to catch, whatever the read threw.
+            throw cause as OperationCanceledException ?? new OperationCanceledException(cancellationToken);
+        }
+        catch (Exception cause) when (deadline.IsCancellationRequested)
+        {
+            throw new FingerlyTimeoutException("The Fingerly request timed out", cause);
+        }
+        catch (ResponseTooLargeException)
+        {
+            throw new FingerlyException(
+                "The Fingerly response was larger than " + SharedHttp.ResponseLimit + " bytes");
         }
         catch (HttpRequestException cause)
+        {
+            throw new FingerlyConnectionException(
+                "Could not reach the Fingerly API", Redact(cause));
+        }
+        catch (IOException cause)
         {
             throw new FingerlyConnectionException("Could not read the Fingerly response", cause);
         }

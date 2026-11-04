@@ -95,8 +95,17 @@ internal static class ProxyExchange
             }
         }
 
-        ProxyResponse result = await proxy.HandleAsync(request, context.RequestAborted)
-            .ConfigureAwait(false);
+        ProxyResponse result;
+        try
+        {
+            result = await proxy.HandleAsync(request, context.RequestAborted).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (context.RequestAborted.IsCancellationRequested)
+        {
+            // The visitor disconnected and the upstream call was abandoned.
+            // Nobody is left to answer, and it is not an error worth a log.
+            return;
+        }
 
         context.Response.StatusCode = result.Status;
         foreach (KeyValuePair<string, string> header in result.Headers)
@@ -110,8 +119,16 @@ internal static class ProxyExchange
             // it already holds whole.
             context.Response.ContentLength = result.Body.Length;
         }
-        await result.WriteBodyToAsync(context.Response.Body, context.RequestAborted)
-            .ConfigureAwait(false);
+        try
+        {
+            await result.WriteBodyToAsync(context.Response.Body, context.RequestAborted)
+                .ConfigureAwait(false);
+        }
+        catch (Exception gone) when (context.RequestAborted.IsCancellationRequested
+            && (gone is OperationCanceledException || gone is System.IO.IOException))
+        {
+            // The visitor left while the answer was being written.
+        }
     }
 
     private static bool CarriesBody(int status) =>

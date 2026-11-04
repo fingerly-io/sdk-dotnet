@@ -1,6 +1,8 @@
 using System;
 using System.Net.Http;
 using Fingerly;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 
 namespace Microsoft.Extensions.DependencyInjection;
@@ -94,8 +96,21 @@ public static class FingerlyServiceCollectionExtensions
         }
 
         services.Configure(configure);
-        services.AddSingleton(provider => new FingerlyProxy(
-            provider.GetRequiredService<IOptions<FingerlyProxyOptions>>().Value));
+        services.AddSingleton(provider =>
+        {
+            ILogger logger = provider.GetService<ILoggerFactory>()?.CreateLogger("Fingerly.FingerlyProxy")
+                ?? NullLogger.Instance;
+            return new FingerlyProxy(
+                provider.GetRequiredService<IOptions<FingerlyProxyOptions>>().Value,
+                line => ProxyLog.UpstreamFailed(logger, line));
+        });
         return services;
     }
+}
+
+/// <summary>The proxy's one log message, defined once so it costs nothing when disabled.</summary>
+internal static partial class ProxyLog
+{
+    [LoggerMessage(EventId = 1, Level = LogLevel.Warning, Message = "{Line}")]
+    internal static partial void UpstreamFailed(ILogger logger, string line);
 }

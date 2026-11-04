@@ -497,16 +497,19 @@ public class FingerlyProxyTest
         ProxyResponse result = await proxy.HandleAsync(request);
 
         Assert.Equal(502, result.Status);
+        Assert.Equal("Bad gateway", Encoding.UTF8.GetString(result.Body.ToArray()));
+        Assert.Equal("text/plain; charset=utf-8", Values(result, "Content-Type").Single());
     }
 
     [Fact]
-    public async Task AnswersBadGatewayWhenFingerlyStalls()
+    public async Task AnswersGatewayTimeoutWhenFingerlyStalls()
     {
         await using TestApi upstream = await TestApi.StartAsync(async context =>
         {
             await context.Response.Body.FlushAsync();
             await Task.Delay(TimeSpan.FromSeconds(30), context.RequestAborted);
         });
+        var lines = new List<string>();
         using var proxy = new FingerlyProxy(new FingerlyProxyOptions
         {
             ProxyKey = ProxyKey,
@@ -514,6 +517,7 @@ public class FingerlyProxyTest
             Upstream = upstream.Origin,
             Timeout = TimeSpan.FromMilliseconds(300),
             ClientIp = _ => "203.0.113.7",
+            Log = lines.Add,
         });
 
         ProxyRequest request = Post(ProxyPath, "{}");
@@ -521,7 +525,125 @@ public class FingerlyProxyTest
 
         ProxyResponse result = await proxy.HandleAsync(request);
 
+        Assert.Equal(504, result.Status);
+        Assert.Equal("Gateway timeout", Encoding.UTF8.GetString(result.Body.ToArray()));
+        Assert.Equal("no-store", Values(result, "Cache-Control").Single());
+        Assert.Single(lines);
+    }
+
+    /// <summary>Headers on time, then a trickle: the deadline still covers the body.</summary>
+    [Fact]
+    public async Task ATricklingAnswerCannotOutlastTheDeadline()
+    {
+        await using TestApi upstream = await TestApi.StartAsync(async context =>
+        {
+            context.Response.ContentLength = 1 << 20;
+            for (int i = 0; i < 100; i++)
+            {
+                await context.Response.Body.WriteAsync(new byte[] { (byte)' ' }, context.RequestAborted);
+                await context.Response.Body.FlushAsync(context.RequestAborted);
+                await Task.Delay(50, context.RequestAborted);
+            }
+        });
+        using var proxy = new FingerlyProxy(new FingerlyProxyOptions
+        {
+            ProxyKey = ProxyKey,
+            Path = ProxyPath,
+            Upstream = upstream.Origin,
+            Timeout = TimeSpan.FromMilliseconds(400),
+            ClientIp = _ => "203.0.113.7",
+        });
+        ProxyRequest request = Post(ProxyPath, "{}");
+        request.AddHeader("X-API-Key", PublicKey);
+
+        var watch = System.Diagnostics.Stopwatch.StartNew();
+        ProxyResponse result = await proxy.HandleAsync(request);
+
+        Assert.Equal(504, result.Status);
+        Assert.True(watch.ElapsedMilliseconds < 2000, $"took {watch.ElapsedMilliseconds} ms");
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task RefusesAnAnswerLargerThanFourMebibytes(bool declared)
+    {
+        byte[] big = new byte[(4 << 20) + 1];
+        await using TestApi upstream = await TestApi.StartAsync(async context =>
+        {
+            context.Response.ContentType = "application/json";
+            if (declared)
+            {
+                context.Response.ContentLength = big.Length;
+            }
+            try
+            {
+                await context.Response.Body.WriteAsync(big, context.RequestAborted);
+            }
+            catch (OperationCanceledException)
+            {
+                // The proxy stops reading at the limit.
+            }
+        });
+        using FingerlyProxy proxy = Proxy(upstream.Origin);
+        ProxyRequest request = Post(ProxyPath, "{}");
+        request.AddHeader("X-API-Key", PublicKey);
+
+        ProxyResponse result = await proxy.HandleAsync(request);
+
         Assert.Equal(502, result.Status);
+        Assert.Equal("Bad gateway", Encoding.UTF8.GetString(result.Body.ToArray()));
+    }
+
+    [Fact]
+    public async Task AThrowingLogHookStillAnswersBadGateway()
+    {
+        using var proxy = new FingerlyProxy(new FingerlyProxyOptions
+        {
+            ProxyKey = ProxyKey,
+            Path = ProxyPath,
+            Upstream = "http://127.0.0.1:9",
+            ClientIp = _ => "203.0.113.7",
+            Log = _ => throw new InvalidOperationException("broken logger"),
+        });
+        ProxyRequest request = Post(ProxyPath, "{}");
+        request.AddHeader("X-API-Key", PublicKey);
+
+        Assert.Equal(502, (await proxy.HandleAsync(request)).Status);
+    }
+
+    [Fact]
+    public async Task AVisitorWhoLeavesCancelsTheUpstreamCall()
+    {
+        var hungUp = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using TestApi upstream = await TestApi.StartAsync(async context =>
+        {
+            try
+            {
+                await Task.Delay(TimeSpan.FromSeconds(30), context.RequestAborted);
+            }
+            catch (OperationCanceledException)
+            {
+                hungUp.TrySetResult(true);
+            }
+        });
+        var lines = new List<string>();
+        using var proxy = new FingerlyProxy(new FingerlyProxyOptions
+        {
+            ProxyKey = ProxyKey,
+            Path = ProxyPath,
+            Upstream = upstream.Origin,
+            ClientIp = _ => "203.0.113.7",
+            Log = lines.Add,
+        });
+        ProxyRequest request = Post(ProxyPath, "{}");
+        request.AddHeader("X-API-Key", PublicKey);
+        using var visitor = new System.Threading.CancellationTokenSource(TimeSpan.FromMilliseconds(300));
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => proxy.HandleAsync(request, visitor.Token));
+
+        Assert.True(await Task.WhenAny(hungUp.Task, Task.Delay(3000)) == hungUp.Task, "the upstream call outlived the visitor");
+        Assert.Empty(lines);
     }
 
     [Fact]

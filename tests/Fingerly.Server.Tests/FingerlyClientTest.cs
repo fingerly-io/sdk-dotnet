@@ -287,4 +287,61 @@ public class FingerlyClientTest
         await Assert.ThrowsAsync<FingerlyConnectionException>(
             () => fingerly.Events.GetAsync("r1"));
     }
+
+    /// <summary>
+    /// The 4 MiB limit holds for any client, the factory's included, because
+    /// the SDK reads the body itself rather than relying on the client's
+    /// buffer setting.
+    /// </summary>
+    [Fact]
+    public async Task RefusesAnAnswerLargerThanFourMebibytesFromAnyClient()
+    {
+        byte[] big = new byte[(4 << 20) + 1];
+        await using TestApi api = await TestApi.StartAsync(async context =>
+        {
+            try
+            {
+                await context.Response.Body.WriteAsync(big, context.RequestAborted);
+            }
+            catch (OperationCanceledException)
+            {
+                // The client stops reading at the limit.
+            }
+        });
+        using var supplied = new HttpClient();
+        var options = new FingerlyOptions { SecretKey = SecretKey, Endpoint = api.Origin };
+
+        foreach (FingerlyClient fingerly in new[] { new FingerlyClient(options), new FingerlyClient(options, supplied) })
+        {
+            FingerlyException failure = await Assert.ThrowsAsync<FingerlyException>(
+                () => fingerly.Events.GetAsync("r1"));
+            Assert.Contains("larger than", failure.Message, StringComparison.Ordinal);
+            fingerly.Dispose();
+        }
+    }
+
+    [Fact]
+    public async Task ATricklingAnswerCannotOutlastTheDeadline()
+    {
+        await using TestApi api = await TestApi.StartAsync(async context =>
+        {
+            context.Response.ContentLength = 1 << 20;
+            for (int i = 0; i < 100; i++)
+            {
+                await context.Response.Body.WriteAsync(new byte[] { (byte)' ' }, context.RequestAborted);
+                await context.Response.Body.FlushAsync(context.RequestAborted);
+                await Task.Delay(50, context.RequestAborted);
+            }
+        });
+        using var fingerly = new FingerlyClient(new FingerlyOptions
+        {
+            SecretKey = SecretKey,
+            Endpoint = api.Origin,
+            Timeout = TimeSpan.FromMilliseconds(400),
+        });
+
+        var watch = System.Diagnostics.Stopwatch.StartNew();
+        await Assert.ThrowsAsync<FingerlyTimeoutException>(() => fingerly.Events.GetAsync("r1"));
+        Assert.True(watch.ElapsedMilliseconds < 2000, $"took {watch.ElapsedMilliseconds} ms");
+    }
 }

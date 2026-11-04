@@ -2,9 +2,11 @@ using System;
 #if NET
 using System.Diagnostics;
 #endif
+using System.IO;
 using System.Net;
 using System.Net.Http;
 using System.Threading;
+using System.Threading.Tasks;
 
 namespace Fingerly;
 
@@ -33,6 +35,9 @@ namespace Fingerly;
 /// </remarks>
 internal static class SharedHttp
 {
+    /// <summary>The largest answer either client accepts, after decoding.</summary>
+    internal const int ResponseLimit = 4 << 20;
+
     private static readonly Lazy<HttpMessageHandler> SharedHandler =
         new(CreateHandler, LazyThreadSafetyMode.ExecutionAndPublication);
 
@@ -87,4 +92,55 @@ internal static class SharedHttp
         {
             Timeout = System.Threading.Timeout.InfiniteTimeSpan,
         };
+
+    /// <summary>
+    /// Reads a body whole, within <see cref="ResponseLimit"/>, under one
+    /// token.
+    /// </summary>
+    /// <remarks>
+    /// The response must have been sent with
+    /// <see cref="HttpCompletionOption.ResponseHeadersRead"/>, so the limit
+    /// is enforced while reading rather than after the handler has buffered
+    /// everything. Cancelling the token also disposes the response, which is
+    /// what aborts a read on runtimes whose streams ignore the token.
+    /// </remarks>
+    /// <exception cref="ResponseTooLargeException">The body passed the limit.</exception>
+    internal static async Task<byte[]> ReadBodyAsync(
+        HttpResponseMessage response, CancellationToken cancellationToken)
+    {
+        if (response.Content.Headers.ContentLength > ResponseLimit)
+        {
+            throw new ResponseTooLargeException();
+        }
+        using CancellationTokenRegistration abort = cancellationToken.Register(response.Dispose);
+#if NET
+        using Stream stream = await response.Content.ReadAsStreamAsync(cancellationToken)
+            .ConfigureAwait(false);
+#else
+        using Stream stream = await response.Content.ReadAsStreamAsync().ConfigureAwait(false);
+#endif
+        using var collected = new MemoryStream();
+        var chunk = new byte[16 * 1024];
+        int read;
+        while ((read = await stream.ReadAsync(chunk, 0, chunk.Length, cancellationToken)
+            .ConfigureAwait(false)) > 0)
+        {
+            if (collected.Length + read > ResponseLimit)
+            {
+                throw new ResponseTooLargeException();
+            }
+            collected.Write(chunk, 0, read);
+        }
+        cancellationToken.ThrowIfCancellationRequested();
+        return collected.ToArray();
+    }
+}
+
+/// <summary>Raised when an answer passes <see cref="SharedHttp.ResponseLimit"/>.</summary>
+internal sealed class ResponseTooLargeException : IOException
+{
+    internal ResponseTooLargeException()
+        : base("The response body is larger than " + SharedHttp.ResponseLimit + " bytes")
+    {
+    }
 }

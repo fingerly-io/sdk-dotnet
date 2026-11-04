@@ -70,6 +70,7 @@ public sealed class FingerlyProxy : IDisposable
     private readonly TimeSpan _timeout;
     private readonly Func<ProxyRequest, string?> _clientIp;
     private readonly HttpClient _httpClient;
+    private readonly Action<string>? _log;
 
     /// <summary>
     /// Builds the proxy, validating every option first.
@@ -79,6 +80,15 @@ public sealed class FingerlyProxy : IDisposable
     /// <exception cref="ArgumentException">A credential, path or callback is invalid.</exception>
     /// <exception cref="ArgumentOutOfRangeException">A limit is not positive.</exception>
     public FingerlyProxy(FingerlyProxyOptions options)
+        : this(options, null)
+    {
+    }
+
+    /// <summary>
+    /// Builds the proxy with a log sink to use when the options name none;
+    /// the ASP.NET Core registration passes the application's logger.
+    /// </summary>
+    internal FingerlyProxy(FingerlyProxyOptions options, Action<string>? fallbackLog)
     {
         if (options is null)
         {
@@ -122,6 +132,7 @@ public sealed class FingerlyProxy : IDisposable
         _timeout = Keys.Positive(options.Timeout, nameof(options.Timeout));
         _clientIp = options.ClientIp;
         _httpClient = CreateHttpClient(options.Handler);
+        _log = options.Log ?? fallbackLog;
     }
 
     /// <summary>
@@ -187,7 +198,7 @@ public sealed class FingerlyProxy : IDisposable
     /// </remarks>
     /// <param name="request">The incoming request, as the adapter read it.</param>
     /// <param name="cancellationToken">Cancels the forward.</param>
-    /// <returns>The upstream response, or a 404, 405, 401, 413, 400 or 502 refusal.</returns>
+    /// <returns>The upstream response, or a 404, 405, 401, 413, 400, 500, 502 or 504 refusal.</returns>
     /// <exception cref="ArgumentNullException"><paramref name="request"/> is null.</exception>
     public async Task<ProxyResponse> HandleAsync(
         ProxyRequest request, CancellationToken cancellationToken = default)
@@ -253,20 +264,63 @@ public sealed class FingerlyProxy : IDisposable
         deadline.CancelAfter(_timeout);
         try
         {
+            // Headers first, then the body under the same deadline and within
+            // the limit, so a trickling upstream cannot outlast the timeout and
+            // a truncated answer is never relayed as a success.
             using HttpResponseMessage response = await _httpClient
-                .SendAsync(upstream, HttpCompletionOption.ResponseContentRead, deadline.Token)
+                .SendAsync(upstream, HttpCompletionOption.ResponseHeadersRead, deadline.Token)
                 .ConfigureAwait(false);
-            return await RelayAsync(response).ConfigureAwait(false);
+            int status = (int)response.StatusCode;
+            byte[] answer = Bodiless.Contains(status)
+                ? Array.Empty<byte>()
+                : await SharedHttp.ReadBodyAsync(response, deadline.Token).ConfigureAwait(false);
+            return Relay(response, status, answer);
         }
-        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+#pragma warning disable CA1031 // Every upstream failure is an answer, never an exception.
+        catch (Exception failure)
+#pragma warning restore CA1031
         {
-            return ProxyResponse.Refusal(502, "Bad Gateway");
-        }
-        catch (HttpRequestException)
-        {
-            return ProxyResponse.Refusal(502, "Bad Gateway");
+            if (cancellationToken.IsCancellationRequested)
+            {
+                // The visitor left: no answer is owed, and nothing failed.
+                throw failure as OperationCanceledException
+                    ?? new OperationCanceledException(cancellationToken);
+            }
+            // A cancelled read can surface as an IOException or a disposed
+            // stream rather than a cancellation; the deadline says which.
+            return Failed(timedOut: deadline.IsCancellationRequested, failure);
         }
     }
+
+    /// <summary>
+    /// Answers an upstream failure: 504 for a timeout, 502 for anything else
+    /// the upstream did (refused, reset, unresolvable, truncated, oversized,
+    /// undecodable), and logs one line for it.
+    /// </summary>
+    private ProxyResponse Failed(bool timedOut, Exception failure)
+    {
+        string line = timedOut
+            ? "Fingerly proxy: upstream did not answer within " + (long)_timeout.TotalMilliseconds + " ms"
+            : "Fingerly proxy: upstream failed (" + Describe(failure) + ")";
+        try
+        {
+            _log?.Invoke(line);
+        }
+#pragma warning disable CA1031 // A logging hook that throws must not turn a 502 into a 500.
+        catch (Exception)
+#pragma warning restore CA1031
+        {
+        }
+        return timedOut
+            ? ProxyResponse.Refusal(504, "Gateway timeout")
+            : ProxyResponse.Refusal(502, "Bad gateway");
+    }
+
+    /// <summary>One short, key-free description: the failure's type and nothing it carries.</summary>
+    private static string Describe(Exception failure) =>
+        failure is ResponseTooLargeException
+            ? "response larger than " + SharedHttp.ResponseLimit + " bytes"
+            : (failure.InnerException ?? failure).GetType().Name;
 
     /// <summary>
     /// Releases this proxy's client. The connection pool is shared, or the
@@ -348,17 +402,12 @@ public sealed class FingerlyProxy : IDisposable
     /// Returns the upstream response, uncacheable and with only the
     /// allowlisted headers.
     /// </summary>
-    private static async Task<ProxyResponse> RelayAsync(HttpResponseMessage response)
+    private static ProxyResponse Relay(HttpResponseMessage response, int status, byte[] body)
     {
         var headers = new List<KeyValuePair<string, string>>();
         Collect(headers, response.Headers);
         Collect(headers, response.Content.Headers);
         headers.Add(new KeyValuePair<string, string>("Cache-Control", "no-store"));
-
-        int status = (int)response.StatusCode;
-        byte[] body = Bodiless.Contains(status)
-            ? Array.Empty<byte>()
-            : await response.Content.ReadAsByteArrayAsync().ConfigureAwait(false);
         return new ProxyResponse(status, headers, body);
     }
 
