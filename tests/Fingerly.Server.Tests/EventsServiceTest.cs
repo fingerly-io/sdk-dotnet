@@ -102,9 +102,8 @@ public class EventsServiceTest
     }
 
     /// <summary>
-    /// An event is readable as soon as identification answers, so a missing
-    /// one means a request id that was never issued: reported at once, in one
-    /// request, rather than waited through.
+    /// A missing event (never issued, or past retention) is reported at once,
+    /// in one request, rather than waited through.
     /// </summary>
     [Fact]
     public async Task ReportsAMissingEventWithoutRetrying()
@@ -117,8 +116,50 @@ public class EventsServiceTest
 
         Assert.Equal(404, failure.Status);
         Assert.True(failure.IsEventNotFound);
+        Assert.False(failure.IsPending);
         Assert.Equal("trace", failure.RequestId);
         Assert.Single(api.Requests);
+    }
+
+    /// <summary>
+    /// An accepted request id whose event is still being recorded is a 404 of
+    /// its own: an API error carrying Retry-After, distinct from a missing
+    /// event, and never retried by the SDK.
+    /// </summary>
+    [Fact]
+    public async Task ReportsAPendingEventWithRetryAfterWithoutRetrying()
+    {
+        await using TestApi api = await TestApi.StartAsync(async context =>
+        {
+            context.Response.StatusCode = 404;
+            context.Response.Headers.RetryAfter = "2";
+            context.Response.ContentType = "application/json";
+            await context.Response.WriteAsync("""{"error":{"code":"event_pending"},"request_id":"trace"}""");
+        });
+        using FingerlyClient fingerly = Client(api);
+
+        FingerlyApiException failure = await Assert.ThrowsAsync<FingerlyApiException>(
+            () => fingerly.Events.GetAsync("r1"));
+
+        Assert.Equal(404, failure.Status);
+        Assert.Equal("event_pending", failure.Code);
+        Assert.True(failure.IsPending);
+        Assert.False(failure.IsEventNotFound);
+        Assert.Equal(2, failure.RetryAfter);
+        Assert.Single(api.Requests);
+    }
+
+    [Fact]
+    public async Task PendingIsNarrow()
+    {
+        await using TestApi api = await TestApi.RespondAsync(
+            429, """{"error":{"code":"event_pending"}}""");
+        using FingerlyClient fingerly = Client(api);
+
+        FingerlyApiException failure = await Assert.ThrowsAsync<FingerlyApiException>(
+            () => fingerly.Events.GetAsync("r1"));
+
+        Assert.False(failure.IsPending);
     }
 
     [Theory]
@@ -137,6 +178,7 @@ public class EventsServiceTest
 
         Assert.Equal(status, failure.Status);
         Assert.False(failure.IsEventNotFound);
+        Assert.False(failure.IsPending);
         Assert.Single(api.Requests);
     }
 

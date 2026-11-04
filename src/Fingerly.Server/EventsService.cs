@@ -29,9 +29,12 @@ public sealed class EventsService
     /// <returns>The stored event.</returns>
     /// <exception cref="ArgumentException"><paramref name="requestId"/> is empty, "." or "..".</exception>
     /// <exception cref="FingerlyApiException">
-    /// Any non-2xx response. An event is readable as soon as identification
-    /// answers, so <c>404 event_not_found</c> means a request id that was
-    /// never issued.
+    /// Any non-2xx response. <c>404 event_pending</c>
+    /// (<see cref="FingerlyApiException.IsPending"/>) means the event was
+    /// accepted and is still being recorded: retry after
+    /// <see cref="FingerlyApiException.RetryAfter"/> seconds.
+    /// <c>404 event_not_found</c> means a request id that was never issued,
+    /// or one past retention.
     /// </exception>
     /// <exception cref="FingerlyTimeoutException">The request exceeded the client timeout.</exception>
     /// <exception cref="OperationCanceledException"><paramref name="cancellationToken"/> was cancelled.</exception>

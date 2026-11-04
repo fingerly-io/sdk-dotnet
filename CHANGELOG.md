@@ -20,6 +20,10 @@ Changes made before the first release, from the pre-release field test:
 - `ClientIp` must return exactly one IP address; `ProxyRequest.RemoteAddress`
   carries the connection's peer, filled by the middleware and the endpoint.
 - The proxy path is matched exactly, against the raw request target.
+- `FingerlyApiException.IsPending` for `404 event_pending`: the event was
+  accepted and is still being recorded, so read again after `RetryAfter`
+  seconds. `IsEventNotFound` still matches only `event_not_found` (never
+  issued, or past retention).
 - `FingerlyApiException.RetryAfter`, and the request id from `X-Request-Id`
   when the body has none; response bodies are never echoed.
 - Webhook verification reads at most 32 signature candidates.

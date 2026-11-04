@@ -86,13 +86,24 @@ public class FingerlyApiException : FingerlyException
     public string? RequestId { get; }
 
     /// <summary>
-    /// Reports whether this is a read for an event that does not exist.
+    /// Reports whether this is a read for an event that does not exist: a
+    /// request id that was never issued, or one past retention.
     /// </summary>
     /// <remarks>
-    /// One is readable as soon as identification answers, so this means a
-    /// request id that was never issued rather than one that has not landed.
+    /// It is false for <see cref="IsPending"/>: that event exists and is still
+    /// being recorded.
     /// </remarks>
     public bool IsEventNotFound => Status == 404 && Code == "event_not_found";
+
+    /// <summary>
+    /// Reports whether this is a read for an event the API accepted but has
+    /// not recorded yet (<c>404 event_pending</c>).
+    /// </summary>
+    /// <remarks>
+    /// Nothing is decided yet: read again after <see cref="RetryAfter"/>
+    /// seconds, or verify asynchronously. The SDK never retries by itself.
+    /// </remarks>
+    public bool IsPending => Status == 404 && Code == "event_pending";
 
     /// <summary>
     /// The seconds the API asked you to wait before trying again, from

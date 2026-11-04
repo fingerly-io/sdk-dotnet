@@ -105,9 +105,13 @@ try
 {
     ev = await fingerly.Events.GetAsync(requestId, ct);
 }
-catch (FingerlyApiException e) when (e.Status == 404)
+catch (FingerlyApiException e) when (e.IsPending)
 {
-    return "refuse";
+    return "retry"; // not decided yet: read again after e.RetryAfter seconds
+}
+catch (FingerlyApiException e) when (e.IsEventNotFound)
+{
+    return "refuse"; // never issued, or past retention
 }
 ```
 
@@ -115,8 +119,18 @@ catch (FingerlyApiException e) when (e.Status == 404)
 included. It carries `Status`, and optional `Code`, `Details`, `RequestId` and
 `RetryAfter`: the seconds `Retry-After` asked for, or null. The secret key is
 stripped from all of them, and a response body is never echoed, not even in
-an inner exception. `IsEventNotFound` names the one retryable read failure, so
-it needs no status-and-code check of your own. A deadline throws
+an inner exception.
+
+A read answers `404` with one of two codes, each with its own check:
+
+- `IsPending`: `event_pending`, the request id was accepted and the event is
+  still being recorded. Nothing is decided yet: read again after `RetryAfter`
+  seconds (the API sends `Retry-After: 2`), or verify asynchronously. Do not
+  treat it as fraud.
+- `IsEventNotFound`: `event_not_found`, the request id was never issued, or
+  the event is past retention.
+
+The client never retries by itself. A deadline throws
 `FingerlyTimeoutException`; an unreachable API throws
 `FingerlyConnectionException`.
 
@@ -142,16 +156,27 @@ later is reachable without an SDK upgrade.
 
 ## Read an event you just identified
 
-An event is readable as soon as identification answers, so this needs nothing
-special:
+An event is usually readable as soon as identification answers. If it is
+still being recorded, the read throws a `FingerlyApiException` whose
+`IsPending` is true and whose `RetryAfter` says when to read again:
 
 ```csharp
-Event ev = await fingerly.Events.GetAsync(requestId, ct);
+Event ev;
+try
+{
+    ev = await fingerly.Events.GetAsync(requestId, ct);
+}
+catch (FingerlyApiException e) when (e.IsPending)
+{
+    // Not recorded yet, so nothing is decided: read again after
+    // e.RetryAfter seconds (2 when null), or verify asynchronously.
+    return "retry";
+}
 ```
 
-Earlier versions had a `WaitForAsync` that polled through the gap between
-identification and the event becoming queryable. There is no gap, so
-`IsEventNotFound` now means a request id that was never issued.
+Retry a pending read a bounded number of times, for example from a background
+job. `IsEventNotFound` means a request id that was never issued, or one past
+retention, and is never pending.
 
 The archived document arrives moments after the event itself, so check
 `HasDocument` rather than assuming it is there.
@@ -160,7 +185,9 @@ The archived document arrives moments after the event itself, so check
 
 Read the event with a server-only key. Check that its tag matches your action,
 that it is recent, that its environment is correct, and that it was scored.
-Apply your own policy to the server's verdict. Do not authorize an action using
+Apply your own policy to the server's verdict. A pending event
+(`IsPending`) is not a verdict: retry after `RetryAfter` seconds or verify
+asynchronously, rather than refusing the action. Do not authorize an action using
 scores or visitor identifiers supplied by the browser. Tags correlate events;
 they do not replace your application's authentication or replay protection.
 
