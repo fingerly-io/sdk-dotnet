@@ -21,19 +21,21 @@ jobs:
       - run: dotnet build -c Release --no-restore
       - run: dotnet test -c Release --no-build
       - run: dotnet pack -c Release --no-build -o artifacts
+      - name: read the version
+        run: echo "VERSION=$(bash .github/scripts/release-version.sh version)" >> "$GITHUB_ENV"
       # The compatibility floor has to be real, not only declared. Java checks
       # its bytecode version here; the .NET equivalent is that both target
       # frameworks actually shipped.
       - name: both target frameworks are in the package
         run: |
-          contents=$(unzip -l artifacts/Fingerly.Server.0.1.0.nupkg)
+          contents=$(unzip -l "artifacts/Fingerly.Server.$VERSION.nupkg")
           echo "$contents" | grep -q 'lib/net8.0/Fingerly.Server.dll'
           echo "$contents" | grep -q 'lib/netstandard2.0/Fingerly.Server.dll'
       # System.Text.Json is the only runtime dependency the core is allowed to
       # have, and only on the framework that lacks it.
       - name: every package carries its readme and licence
         run: |
-          for package in artifacts/Fingerly.Server.0.1.0.nupkg artifacts/Fingerly.Server.AspNetCore.0.1.0.nupkg; do
+          for package in "artifacts/Fingerly.Server.$VERSION.nupkg" "artifacts/Fingerly.Server.AspNetCore.$VERSION.nupkg"; do
             contents=$(unzip -l "$package")
             echo "$contents" | grep -q ' README.md$'
             echo "$contents" | grep -q ' LICENSE$'
@@ -41,7 +43,7 @@ jobs:
           done
       - name: no unexpected runtime dependencies
         run: |
-          unzip -p artifacts/Fingerly.Server.0.1.0.nupkg '*.nuspec' > core.nuspec
+          unzip -p "artifacts/Fingerly.Server.$VERSION.nupkg" '*.nuspec' > core.nuspec
           declared=$(grep -c '<dependency ' core.nuspec || true)
           if [ "$declared" != "1" ]; then
             echo "the core package declares $declared dependencies:"; cat core.nuspec; exit 1

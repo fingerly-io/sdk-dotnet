@@ -1,8 +1,7 @@
 # fingerly-dotnet
 
 Server-side event reads, webhook verification and a same-origin proxy for
-.NET. Version 0.1.0 is prepared for release; the repository is private and
-nothing has been published to NuGet.
+.NET.
 
 ```sh
 dotnet add package Fingerly.Server

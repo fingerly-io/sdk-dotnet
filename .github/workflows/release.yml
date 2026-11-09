@@ -1,0 +1,121 @@
+name: Release
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: release
+  cancel-in-progress: false
+jobs:
+  check:
+    # A manual run from another branch must not publish that branch.
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.gate.outputs.version }}
+      release: ${{ steps.gate.outputs.release }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ github.sha }}
+      - id: gate
+        run: bash .github/scripts/release-version.sh check >> "$GITHUB_OUTPUT"
+
+  # test and trim are the same commands as ci.yml. They run apart from publish
+  # so that the project's own code never executes in a job holding the OIDC
+  # permission.
+  test:
+    needs: check
+    if: needs.check.outputs.release == 'true'
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        dotnet: ["8.0.x", "10.0.x"]
+    env:
+      VERSION: ${{ needs.check.outputs.version }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4.3.1
+        with:
+          dotnet-version: ${{ matrix.dotnet }}
+      - run: dotnet restore
+      - run: dotnet build -c Release --no-restore
+      - run: dotnet test -c Release --no-build
+      - run: dotnet pack -c Release --no-build -o artifacts
+      - name: both target frameworks are in the package
+        run: |
+          contents=$(unzip -l "artifacts/Fingerly.Server.$VERSION.nupkg")
+          echo "$contents" | grep -q 'lib/net8.0/Fingerly.Server.dll'
+          echo "$contents" | grep -q 'lib/netstandard2.0/Fingerly.Server.dll'
+      - name: every package carries its readme and licence
+        run: |
+          for package in "artifacts/Fingerly.Server.$VERSION.nupkg" "artifacts/Fingerly.Server.AspNetCore.$VERSION.nupkg"; do
+            contents=$(unzip -l "$package")
+            echo "$contents" | grep -q ' README.md$'
+            echo "$contents" | grep -q ' LICENSE$'
+            unzip -p "$package" '*.nuspec' | grep -q '<readme>README.md</readme>'
+          done
+      - name: no unexpected runtime dependencies
+        run: |
+          unzip -p "artifacts/Fingerly.Server.$VERSION.nupkg" '*.nuspec' > core.nuspec
+          declared=$(grep -c '<dependency ' core.nuspec || true)
+          if [ "$declared" != "1" ]; then
+            echo "the core package declares $declared dependencies:"; cat core.nuspec; exit 1
+          fi
+          grep -q '<dependency id="System.Text.Json"' core.nuspec
+          grep -q '<group targetFramework="net8.0" />' core.nuspec
+
+  trim:
+    needs: check
+    if: needs.check.outputs.release == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4.3.1
+        with:
+          dotnet-version: "10.0.x"
+      - run: dotnet publish tools/TrimCheck -c Release -r linux-x64 -o trimmed
+      - run: ./trimmed/TrimCheck
+
+  publish:
+    needs: [check, test, trim]
+    if: needs.check.outputs.release == 'true'
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      contents: write
+      id-token: write
+    env:
+      VERSION: ${{ needs.check.outputs.version }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - run: bash .github/scripts/release-version.sh consistency
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4.3.1
+        with:
+          dotnet-version: "10.0.x"
+      - run: dotnet restore
+      - run: dotnet build -c Release --no-restore
+      - run: dotnet pack -c Release --no-build -o artifacts
+      - id: login
+        uses: NuGet/login@8d196754b4036150537f80ac539e15c2f1028841 # v1.2.0
+        with:
+          user: ${{ secrets.NUGET_USER }}
+      # Pushing the .nupkg files also pushes the .snupkg beside each.
+      - run: dotnet nuget push 'artifacts/*.nupkg' --api-key "$NUGET_API_KEY" --source https://api.nuget.org/v3/index.json --skip-duplicate
+        env:
+          NUGET_API_KEY: ${{ steps.login.outputs.NUGET_API_KEY }}
+      - name: tag and release
+        run: gh release create "v$VERSION" --target "$GITHUB_SHA" --title "v$VERSION" --generate-notes
+        env:
+          GH_TOKEN: ${{ github.token }}
