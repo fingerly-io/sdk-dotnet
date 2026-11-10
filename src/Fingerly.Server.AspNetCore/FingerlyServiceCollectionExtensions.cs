@@ -57,6 +57,9 @@ public static class FingerlyServiceCollectionExtensions
             // cookie jar, no trace or baggage propagation. The factory
             // recycles it, which keeps DNS fresh.
             .ConfigurePrimaryHttpMessageHandler(SharedHttp.CreateHandler)
+            // FingerlyOptions.Timeout is the deadline; the factory's default
+            // 100 seconds would otherwise cut a longer one short.
+            .ConfigureHttpClient(client => client.Timeout = System.Threading.Timeout.InfiniteTimeSpan)
             .AddTypedClient((httpClient, provider) => new FingerlyClient(
                 provider.GetRequiredService<IOptions<FingerlyOptions>>().Value, httpClient));
     }

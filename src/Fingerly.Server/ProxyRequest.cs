@@ -21,8 +21,8 @@ public sealed class ProxyRequest
     /// <summary>Describes one request.</summary>
     /// <param name="method">The HTTP method.</param>
     /// <param name="path">
-    /// The whole request path, including the mount prefix. Under ASP.NET Core
-    /// that is <c>PathBase + Path</c>, not <c>Path</c> alone.
+    /// The application-relative request path. Under ASP.NET Core that is
+    /// <c>Path</c> alone, never <c>PathBase + Path</c>.
     /// </param>
     public ProxyRequest(string method, string path)
     {
@@ -33,7 +33,7 @@ public sealed class ProxyRequest
     /// <summary>The HTTP method.</summary>
     public string Method { get; }
 
-    /// <summary>The whole request path, including the mount prefix.</summary>
+    /// <summary>The application-relative request path.</summary>
     public string Path { get; }
 
     /// <summary>

@@ -30,3 +30,10 @@ Changes made before the first release, from the pre-release field test:
 - `ToString()` of every SDK object redacts credentials; the options serialize
   without their keys.
 - Both packages carry `README.md` and `LICENSE`.
+- A supplied `HttpClient`'s own `Timeout` is `FingerlyTimeoutException`, and a
+  failure raised by a handler you added is `FingerlyConnectionException` with
+  the original as its cause. `AddFingerly` turns the factory's 100-second
+  timeout off, so `FingerlyOptions.Timeout` is the only deadline.
+- The proxy drops an upstream header value Kestrel could not write, rather
+  than failing the response with a 500.
+- A `Timeout` over 24 days is refused when the client or proxy is built.

@@ -125,14 +125,20 @@ internal static class Keys
         return version;
     }
 
+    /// <summary>
+    /// The longest deadline <c>CancelAfter</c> accepts on every target; past
+    /// it the call throws, which would otherwise happen on each request.
+    /// </summary>
+    private static readonly TimeSpan MaxDeadline = TimeSpan.FromMilliseconds(int.MaxValue);
+
     /// <summary>Validates a duration option.</summary>
-    /// <exception cref="ArgumentOutOfRangeException">It is zero or negative.</exception>
+    /// <exception cref="ArgumentOutOfRangeException">It is not positive, or is too long to be a deadline.</exception>
     internal static TimeSpan Positive(TimeSpan value, string paramName)
     {
-        if (value <= TimeSpan.Zero)
+        if (value <= TimeSpan.Zero || value > MaxDeadline)
         {
             throw new ArgumentOutOfRangeException(
-                paramName, value, paramName + " must be a positive duration");
+                paramName, value, paramName + " must be a positive duration of at most 24 days");
         }
         return value;
     }

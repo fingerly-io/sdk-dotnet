@@ -222,6 +222,17 @@ public sealed class FingerlyClient : IDisposable
         {
             throw new FingerlyConnectionException("Could not read the Fingerly response", cause);
         }
+        catch (OperationCanceledException cause)
+        {
+            // Neither token fired, so a supplied client's own Timeout did.
+            throw new FingerlyTimeoutException("The Fingerly request timed out", cause);
+        }
+#pragma warning disable CA1031 // A handler the caller added raises its own types; the cause is kept.
+        catch (Exception cause)
+#pragma warning restore CA1031
+        {
+            throw new FingerlyConnectionException("Could not reach the Fingerly API", cause);
+        }
     }
 
     /// <summary>

@@ -3,7 +3,9 @@ using System.Collections.Generic;
 using System.IO;
 using System.IO.Compression;
 using System.Linq;
+using System.Net.Http;
 using System.Text;
+using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Http;
 using Xunit;
@@ -150,6 +152,64 @@ public class FingerlyProxyTest
         Assert.True(proxy.Handles("/anything"));
         Assert.Equal(200, result.Status);
         Assert.Equal("/api/v1/ingest", upstream.Requests[0].Path);
+    }
+
+    /// <summary>
+    /// Kestrel throws while writing a response header holding a control or
+    /// non-ASCII character, so relaying one would turn an answer into a
+    /// crash log and an empty 500.
+    /// </summary>
+    [Theory]
+    [InlineData("café")]
+    [InlineData("a\u0001b")]
+    public async Task DropsAnUpstreamHeaderTheHostCouldNotWrite(string value)
+    {
+        using var proxy = new FingerlyProxy(new FingerlyProxyOptions
+        {
+            ProxyKey = ProxyKey,
+            Upstream = "http://127.0.0.1:9",
+            ClientIp = _ => "203.0.113.7",
+            Handler = new AnswerWithRequestId(value),
+        });
+        ProxyRequest request = Post("/anywhere", "{}");
+        request.AddHeader("X-API-Key", PublicKey);
+
+        ProxyResponse result = await proxy.HandleAsync(request);
+
+        Assert.Equal(200, result.Status);
+        Assert.DoesNotContain(
+            result.Headers,
+            header => string.Equals(header.Key, "X-Request-Id", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(result.Headers, header => header.Key == "Cache-Control");
+    }
+
+    private sealed class AnswerWithRequestId : HttpMessageHandler
+    {
+        private readonly string _value;
+
+        internal AnswerWithRequestId(string value) => _value = value;
+
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            var response = new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+            {
+                Content = new ByteArrayContent(new byte[] { 0x7b, 0x7d }),
+            };
+            response.Headers.TryAddWithoutValidation("X-Request-Id", _value);
+            return Task.FromResult(response);
+        }
+    }
+
+    [Fact]
+    public void RefusesATimeoutTooLongToBeADeadline()
+    {
+        Assert.Throws<ArgumentOutOfRangeException>(() => new FingerlyProxy(new FingerlyProxyOptions
+        {
+            ProxyKey = ProxyKey,
+            ClientIp = _ => "203.0.113.7",
+            Timeout = TimeSpan.MaxValue,
+        }));
     }
 
     [Fact]

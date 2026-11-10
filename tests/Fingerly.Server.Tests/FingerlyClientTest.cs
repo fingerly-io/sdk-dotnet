@@ -72,6 +72,17 @@ public class FingerlyClientTest
             new FingerlyOptions { SecretKey = SecretKey, Timeout = TimeSpan.Zero }));
     }
 
+    /// <summary>
+    /// CancelAfter throws past its limit, which would otherwise surface on
+    /// every read rather than at construction.
+    /// </summary>
+    [Fact]
+    public void RefusesATimeoutTooLongToBeADeadline()
+    {
+        Assert.Throws<ArgumentOutOfRangeException>(() => new FingerlyClient(
+            new FingerlyOptions { SecretKey = SecretKey, Timeout = TimeSpan.MaxValue }));
+    }
+
     [Fact]
     public void RefusesTwoTransportsAtOnce()
     {
@@ -177,6 +188,52 @@ public class FingerlyClientTest
         await Assert.ThrowsAsync<FingerlyTimeoutException>(() => fingerly.Events.GetAsync("r1"));
 
         Assert.True(elapsed.Elapsed < TimeSpan.FromSeconds(10), $"took {elapsed.Elapsed}");
+    }
+
+    /// <summary>
+    /// A supplied client's own Timeout fires as a TaskCanceledException that
+    /// neither of the SDK's tokens explains.
+    /// </summary>
+    [Fact]
+    public async Task ASuppliedClientsOwnTimeoutIsReportedAsATimeout()
+    {
+        await using TestApi api = await TestApi.StartAsync(async context =>
+        {
+            await Task.Delay(TimeSpan.FromSeconds(30), context.RequestAborted);
+        });
+        using var http = new HttpClient { Timeout = TimeSpan.FromMilliseconds(200) };
+        using var fingerly = new FingerlyClient(
+            new FingerlyOptions { SecretKey = SecretKey, Endpoint = api.Origin, Timeout = TimeSpan.FromSeconds(30) },
+            http);
+
+        await Assert.ThrowsAsync<FingerlyTimeoutException>(() => fingerly.Events.GetAsync("r1"));
+    }
+
+    /// <summary>
+    /// A resilience handler added to the client raises its own types; the
+    /// documented promise is that every exception derives from FingerlyException.
+    /// </summary>
+    [Fact]
+    public async Task AHandlersOwnFailureIsAFingerlyException()
+    {
+        using var fingerly = new FingerlyClient(new FingerlyOptions
+        {
+            SecretKey = SecretKey,
+            Endpoint = "http://127.0.0.1:9",
+            Handler = new RefusingHandler(),
+        });
+
+        FingerlyConnectionException failure =
+            await Assert.ThrowsAsync<FingerlyConnectionException>(() => fingerly.Events.GetAsync("r1"));
+
+        Assert.IsType<InvalidOperationException>(failure.InnerException);
+    }
+
+    private sealed class RefusingHandler : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request, CancellationToken cancellationToken) =>
+            throw new InvalidOperationException("circuit open");
     }
 
     /// <summary>

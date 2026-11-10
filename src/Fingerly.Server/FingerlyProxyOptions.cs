@@ -45,7 +45,8 @@ public sealed class FingerlyProxyOptions
 
     /// <summary>
     /// The path the dashboard issued for this proxy, such as <c>/k7x2qm4a</c>,
-    /// matched exactly. Trailing slashes are ignored.
+    /// matched exactly. A trailing slash is refused here and is a different
+    /// path on a request.
     /// </summary>
     /// <remarks>
     /// The proxy answers that path and nothing under it. Leave it null only

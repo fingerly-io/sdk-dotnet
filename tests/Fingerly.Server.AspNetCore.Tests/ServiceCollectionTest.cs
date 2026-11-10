@@ -18,6 +18,22 @@ public class ServiceCollectionTest
     private const string ProxyKey = "fly_px_production_proxy";
     private const string PublicKey = "fly_pk_production_browser";
 
+    /// <summary>
+    /// The factory's default 100-second timeout would otherwise cut short a
+    /// longer FingerlyOptions.Timeout.
+    /// </summary>
+    [Fact]
+    public async Task AddFingerlyLeavesTheDeadlineToTheOptions()
+    {
+        var services = new ServiceCollection();
+        services.AddFingerly(options => options.SecretKey = SecretKey);
+        await using ServiceProvider provider = services.BuildServiceProvider();
+
+        HttpClient client = provider.GetRequiredService<IHttpClientFactory>().CreateClient(nameof(FingerlyClient));
+
+        Assert.Equal(System.Threading.Timeout.InfiniteTimeSpan, client.Timeout);
+    }
+
     [Fact]
     public async Task AddFingerlyRegistersAWorkingClient()
     {

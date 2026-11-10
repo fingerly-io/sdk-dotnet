@@ -481,7 +481,12 @@ public sealed class FingerlyProxy : IDisposable
             }
             foreach (string value in header.Value)
             {
-                headers.Add(new KeyValuePair<string, string>(header.Key, value));
+                // Kestrel throws while writing a control or non-ASCII byte,
+                // which would turn an upstream's answer into an empty 500.
+                if (Keys.IsHeaderSafe(value))
+                {
+                    headers.Add(new KeyValuePair<string, string>(header.Key, value));
+                }
             }
         }
     }
