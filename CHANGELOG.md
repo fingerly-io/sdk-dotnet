@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+- `Event.ProjectId` (`project_id`) is the Fingerly project an event belongs
+  to, on single reads and list rows. It is null when the server does not send
+  it.
+- Webhook `Data` for `identification.completed` and `visitor.suspect` (and
+  `identification.refused` when the key was known) carries `project_id`; read
+  it from `Data`.
+- The vendored contract snapshot is refreshed.
+
 ## 0.1.0
 
 First release: event reads, webhook verification and the same-origin proxy,
