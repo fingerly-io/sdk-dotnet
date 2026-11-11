@@ -5,9 +5,15 @@
 - `Event.ProjectId` (`project_id`) is the Fingerly project an event belongs
   to, on single reads and list rows. It is null when the server does not send
   it.
-- Webhook `Data` for `identification.completed` and `visitor.suspect` (and
+- Webhook `data` for `identification.completed` and `visitor.suspect` (and
   `identification.refused` when the key was known) carries `project_id`; read
   it from `Data`.
+- Events carry `IpNetwork` (`ip_network`), an IPv4 /24 or IPv6 /40, instead
+  of `IpAddress`; the API no longer returns the address.
+- `DeferredSignals` is removed: single-event reads no longer return the
+  deferred report.
+- `Document` is an allow-listed view of the archived submission, without raw
+  signals, user agent or address.
 - The vendored contract snapshot is refreshed.
 
 ## 0.1.0
