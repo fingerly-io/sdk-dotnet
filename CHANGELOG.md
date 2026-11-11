@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- Events carry `IpNetwork` (`ip_network`), an IPv4 /24 or IPv6 /40, instead
+  of `IpAddress`; the API no longer returns the address.
+- `DeferredSignals` is removed: single-event reads no longer return the
+  deferred report.
+- `Document` is an allow-listed view of the archived submission, without raw
+  signals, user agent or address.
+
 ## 0.1.0
 
 First release: event reads, webhook verification and the same-origin proxy,
