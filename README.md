@@ -40,6 +40,10 @@ Requests do not follow redirects. `GetAsync` and `ListAsync` each perform one
 request and never retry. An empty, `.` or `..` request id is an
 `ArgumentException`.
 
+`Event.ProjectId` is the UUID of the Fingerly project the event belongs to, on
+`GetAsync` and on every `ListAsync` row; it is null when an older server does
+not send it.
+
 ## Packages
 
 | Package | Contains | For |
@@ -189,6 +193,8 @@ Apply your own policy to the server's verdict. A pending event
 asynchronously, rather than refusing the action. Do not authorize an action using
 scores or visitor identifiers supplied by the browser. Tags correlate events;
 they do not replace your application's authentication or replay protection.
+Never put a personal identifier (user ID, email, install ID or advertising ID)
+in a tag: the server keeps tags in long-lived rollups.
 
 ## Webhooks
 
@@ -224,7 +230,10 @@ header is accepted; at most 32 are read. Malformed or missing input is a false
 result, never an exception.
 
 `WebhookEvent.Data` stays a `JsonElement`, so a new event type needs no SDK
-upgrade.
+upgrade. `identification.completed` and `visitor.suspect` carry the event's
+project as `data.project_id`; `identification.refused` carries it only when the
+refused request named a known key. Read it with
+`Data.TryGetProperty("project_id", out var projectId)`.
 
 ## Same-origin proxy
 

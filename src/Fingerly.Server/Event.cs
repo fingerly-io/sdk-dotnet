@@ -92,6 +92,13 @@ public sealed class Event
     [JsonPropertyName("tag")]
     public string? Tag { get; init; }
 
+    /// <summary>
+    /// The Fingerly project the event belongs to, a UUID. <see langword="null"/>
+    /// when the server predates projects and did not send it.
+    /// </summary>
+    [JsonPropertyName("project_id")]
+    public string? ProjectId { get; init; }
+
     /// <summary>The address Fingerly saw the submission from.</summary>
     [JsonPropertyName("ip_address")]
     public string? IpAddress { get; init; }
