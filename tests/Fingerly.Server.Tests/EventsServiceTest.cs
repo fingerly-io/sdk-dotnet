@@ -27,6 +27,32 @@ public class EventsServiceTest
     }
 
     [Fact]
+    public async Task ExposesTheProjectId()
+    {
+        await using TestApi api = await TestApi.RespondAsync(
+            200,
+            """{"request_id":"r1","visitor_id":"v1","occurred_at":"2026-01-02T03:04:05Z","project_id":"0199a963-e400-7000-8000-0000000000a1"}""");
+        using FingerlyClient fingerly = Client(api);
+
+        Event stored = await fingerly.Events.GetAsync("r1");
+
+        Assert.Equal("0199a963-e400-7000-8000-0000000000a1", stored.ProjectId);
+    }
+
+    [Fact]
+    public async Task DecodesAnEventWithoutAProjectId()
+    {
+        // Servers older than projects do not send the field.
+        await using TestApi api = await TestApi.RespondAsync(200, EventJson);
+        using FingerlyClient fingerly = Client(api);
+
+        Event stored = await fingerly.Events.GetAsync("r1");
+
+        Assert.Equal("r1", stored.RequestId);
+        Assert.Null(stored.ProjectId);
+    }
+
+    [Fact]
     public async Task EscapesARequestIdIntoOnePathSegment()
     {
         await using TestApi api = await TestApi.RespondAsync(200, EventJson);

@@ -92,9 +92,20 @@ public sealed class Event
     [JsonPropertyName("tag")]
     public string? Tag { get; init; }
 
-    /// <summary>The address Fingerly saw the submission from.</summary>
-    [JsonPropertyName("ip_address")]
-    public string? IpAddress { get; init; }
+    /// <summary>
+    /// The Fingerly project the event belongs to, a UUID. <see langword="null"/>
+    /// when the server predates projects and did not send it.
+    /// </summary>
+    [JsonPropertyName("project_id")]
+    public string? ProjectId { get; init; }
+
+    /// <summary>
+    /// The network the request came from: an IPv4 /24 or an IPv6 /40, such as
+    /// <c>203.0.113.0/24</c>. Fingerly never returns the address itself. Null
+    /// when absent.
+    /// </summary>
+    [JsonPropertyName("ip_network")]
+    public string? IpNetwork { get; init; }
 
     /// <summary>The ISO 3166-1 alpha-2 country of that address.</summary>
     [JsonPropertyName("country_code")]
@@ -169,19 +180,15 @@ public sealed class Event
     public bool HasDocument { get; init; }
 
     /// <summary>
-    /// The archived submission with the threshold and weights that scored it.
-    /// Present when <see cref="HasDocument"/> is true and the archive could be
-    /// read. Its contents are deliberately opaque, not a public contract.
+    /// An allow-listed view of the archived submission: schema, request id,
+    /// time, SDK platform and version, IP network, IP classification (network,
+    /// city-level location, detections), risk, attestation and velocity. It
+    /// carries no raw signals, user agent or address. Present when
+    /// <see cref="HasDocument"/> is true and the archive could be read. Its
+    /// contents are deliberately opaque, not a public contract.
     /// </summary>
     [JsonPropertyName("document")]
     public JsonElement? Document { get; init; }
-
-    /// <summary>
-    /// The deferred report attached to this request, when one arrived. Also
-    /// opaque.
-    /// </summary>
-    [JsonPropertyName("deferred_signals")]
-    public JsonElement? DeferredSignals { get; init; }
 
     /// <summary>
     /// The response body exactly as it arrived, so a field the API adds after

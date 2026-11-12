@@ -51,6 +51,7 @@ public class ContractTest
             Assert.Equal(fixture.Body.GetProperty("request_id").GetString(), stored.RequestId);
             Assert.Equal(fixture.Body.GetProperty("visitor_id").GetString(), stored.VisitorId);
             Assert.NotEqual(default, stored.OccurredAt);
+            Assert.Equal(ProjectIdOf(fixture.Body), stored.ProjectId);
 
             // A fixture without a score must not decode as zero.
             bool expected = fixture.Body.TryGetProperty("suspect_score", out JsonElement score)
@@ -81,6 +82,7 @@ public class ContractTest
             for (int i = 0; i < rows.Count; i++)
             {
                 Assert.Equal(rows[i].GetProperty("request_id").GetString(), page.Rows[i].RequestId);
+                Assert.Equal(ProjectIdOf(rows[i]), page.Rows[i].ProjectId);
             }
         }
     }
@@ -152,7 +154,15 @@ public class ContractTest
         Assert.Equal(JsonValueKind.Object, delivery.Data.ValueKind);
         Assert.False(string.IsNullOrEmpty(
             delivery.Data.GetProperty("request_id").GetString()));
+        // The project travels in data, read like any other member.
+        Assert.False(string.IsNullOrEmpty(ProjectIdOf(delivery.Data)));
     }
+
+    private static string? ProjectIdOf(JsonElement body) =>
+        body.TryGetProperty("project_id", out JsonElement value)
+            && value.ValueKind == JsonValueKind.String
+            ? value.GetString()
+            : null;
 
     private static FingerlyClient Client(TestApi api) =>
         new(new FingerlyOptions { SecretKey = SecretKey, Endpoint = api.Origin });
