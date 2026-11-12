@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.2.0
 
 - `Event.ProjectId` (`project_id`) is the Fingerly project an event belongs
   to, on single reads and list rows. It is null when the server does not send

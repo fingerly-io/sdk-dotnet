@@ -309,7 +309,7 @@ key, or the request gets `401`. Bodies over 1 MiB get `413`, enforced
 while reading rather than after buffering. Only the content type, the visitor
 metadata Fingerly needs, and an `Idempotency-Key` are forwarded; customer
 cookies, authorization headers and trace context never are. The proxy reports
-itself upstream as `dotnet/0.1.0`, which the dashboard shows per proxy.
+itself upstream as `dotnet/0.2.0`, which the dashboard shows per proxy.
 
 Only `Content-Type`, `X-Request-Id`, `RateLimit-Limit`, `RateLimit-Remaining`
 and `Retry-After` are relayed back, with `Cache-Control: no-store` added. A

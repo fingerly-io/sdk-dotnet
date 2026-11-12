@@ -20,7 +20,7 @@
 
   <!-- Package metadata, identical for every shipped assembly. -->
   <PropertyGroup>
-    <Version>0.1.0</Version>
+    <Version>0.2.0</Version>
     <Authors>Fingerly</Authors>
     <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
     <Company>Fingerly</Company>
