@@ -22,6 +22,13 @@
   request. `DeviceCheckErrors` names the codes, and
   `FingerlyApiException.AppleStatus` carries Apple's status on
   `apple_rejected`.
+- Added `fingerly.Events.VerifyAsync(requestId, VerifyOptions?)`, which reads
+  an event and checks it exists, is recent (`MaxAgeSeconds`, 300 by default),
+  carries the expected `Tag`, is identifiable and scored, then consumes it
+  once, reporting the first failure as a `VerifyReasons` value; and
+  `fingerly.Events.ConsumeAsync(requestId)`, which throws
+  `FingerlyEventAlreadyConsumedException` (with `ConsumedAt`) on
+  `409 event_already_consumed`.
 - `FingerlyProxy` requires `ProxyKey` and checks the caller's public key on
   every request; it accepts no secret key and never sends one upstream.
 

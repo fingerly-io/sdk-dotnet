@@ -17,6 +17,9 @@ using var fingerly = new FingerlyClient(new FingerlyOptions
 await Expect<FingerlyException>(() => fingerly.Events.GetAsync("r1"));
 await Expect<FingerlyException>(
     () => fingerly.Events.ListAsync(new EventListOptions { Level = "high", Limit = 5 }));
+await Expect<FingerlyException>(() => fingerly.Events.ConsumeAsync("r1"));
+await Expect<FingerlyException>(
+    () => fingerly.Events.VerifyAsync("r1", new VerifyOptions { Tag = "checkout" }));
 await Expect<FingerlyException>(() => fingerly.DeviceCheck.QueryAsync("r1"));
 await Expect<FingerlyException>(
     () => fingerly.DeviceCheck.WriteAsync("r1", new DeviceCheckWrite { Bit0 = true }));

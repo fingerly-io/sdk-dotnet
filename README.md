@@ -213,15 +213,61 @@ constants on `EventTrigger`: `SignalAttestationFailed` (`"attestation_failed"`),
 
 ## Verify a backend action
 
-Read the event with a server-only key. Check that its tag matches your action,
-that it is recent, that its environment is correct, and that it was scored.
-Apply your own policy to the server's verdict. A pending event
-(`IsPending`) is not a verdict: retry after `RetryAfter` seconds or verify
-asynchronously, rather than refusing the action. Do not authorize an action using
-scores or visitor identifiers supplied by the browser. Tags correlate events;
-they do not replace your application's authentication or replay protection.
-Never put a personal identifier (user ID, email, install ID or advertising ID)
-in a tag: the server keeps tags in long-lived rollups.
+Send the browser's `request_id` to your backend and verify it there with a
+server-only key, which reads only the events of its own environment.
+`VerifyAsync` reads the event and runs these checks in order, stopping at the
+first that fails:
+
+| Check | `Reason` (`VerifyReasons`) |
+|---|---|
+| The event exists | `not_found` (`NotFound`); `Event` is null |
+| It is no older than `MaxAgeSeconds` (300 by default); a missing or unreadable `occurred_at` fails | `too_old` (`TooOld`) |
+| Its tag equals `Tag`, when you set one | `tag_mismatch` (`TagMismatch`) |
+| It has a visitor id (`VisitorId` is `""` when unidentifiable) | `unidentifiable` (`Unidentifiable`) |
+| It carries a suspect score | `unscored` (`Unscored`) |
+| It was not consumed before | `already_consumed` (`AlreadyConsumed`) |
+
+When every check passes, `Ok` is true and `Reason` is `""`. Consumption comes
+last and happens only when every other check passed, so one event backs one
+decision; pass `Consume = false` to check without consuming. Score policy
+stays with you: `VerifyAsync` never looks at the score, level or triggers.
+
+```csharp
+VerifyResult result;
+try
+{
+    result = await fingerly.Events.VerifyAsync(
+        requestId, new VerifyOptions { Tag = "checkout" }, ct);
+}
+catch (FingerlyApiException e) when (e.IsPending)
+{
+    // Not recorded yet, so nothing is decided: verify again after
+    // e.RetryAfter seconds, or asynchronously.
+    return "retry";
+}
+
+if (!result.Ok) return "refuse"; // result.Reason says why
+if (result.Event!.SuspectLevel == "high") return "review";
+return "allow";
+```
+
+A pending event (`IsPending`) is not a verdict, so `VerifyAsync` throws it
+rather than reporting a reason: retry after `RetryAfter` seconds or verify
+asynchronously, rather than refusing the action. Every error other than
+`event_not_found` and `event_already_consumed` is thrown unchanged. A
+non-positive `MaxAgeSeconds` or an empty `Tag` throws `ArgumentException`
+before any request.
+
+`ConsumeAsync(requestId)` consumes an event directly and returns a
+`ConsumeResult` (`RequestId`, `ConsumedAt`, `First`). Any later call throws
+`FingerlyEventAlreadyConsumedException`, a `FingerlyApiException` with status
+`409`, code `event_already_consumed` (`IsEventAlreadyConsumed`) and the
+original time in `ConsumedAt`.
+
+Do not authorize an action using scores or visitor identifiers supplied by the
+browser. Tags correlate events; they do not replace your application's
+authentication. Never put a personal identifier (user ID, email, install ID or
+advertising ID) in a tag: the server keeps tags in long-lived rollups.
 
 ## DeviceCheck bits
 
@@ -500,7 +546,8 @@ check step. Never put production secrets in fixtures.
 
 `FingerlyClient` holds the options; `EventsService` owns the reads and the list
 filters, and `Event`, `EventPage` and `EventListOptions` are what they speak
-in. `DeviceCheckService` spends held DeviceCheck tokens, with
+in; it also verifies and consumes events, with `VerifyOptions`,
+`VerifyResult`, `VerifyReasons` and `ConsumeResult`. `DeviceCheckService` spends held DeviceCheck tokens, with
 `DeviceCheckBits`, `DeviceCheckWrite` and `DeviceCheckWriteResult`. `Webhooks` verifies signatures. `FingerlyProxy` holds every proxy decision,
 with `ProxyRequest` and `ProxyResponse` as the neutral shapes the hosts
 translate to. `SharedHttp` is the process-wide connection pool and reads every

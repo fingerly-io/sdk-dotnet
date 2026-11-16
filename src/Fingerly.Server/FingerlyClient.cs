@@ -302,12 +302,44 @@ public sealed class FingerlyClient : IDisposable
         {
             details = Json.Reparse(Redact(raw.GetRawText()));
         }
-        return new FingerlyApiException(
-            status,
-            RedactOrNull(envelope.Error?.Code),
-            details,
-            RedactOrNull(envelope.RequestId) ?? headerRequestId,
-            retryAfter);
+        string? code = RedactOrNull(envelope.Error?.Code ?? StringOf(envelope.Code));
+        string? requestId = RedactOrNull(envelope.RequestId) ?? headerRequestId;
+        if (status == 409 && code == FingerlyEventAlreadyConsumedException.ErrorCode)
+        {
+            string? consumedAt = StringOf(envelope.ConsumedAt)
+                ?? StringOf(envelope.Error?.ConsumedAt)
+                ?? DetailIssue(details, "consumed_at");
+            return new FingerlyEventAlreadyConsumedException(
+                status, code, details, requestId, retryAfter, RedactOrNull(consumedAt));
+        }
+        return new FingerlyApiException(status, code, details, requestId, retryAfter);
+    }
+
+    /// <summary>The value of a string tree, or null for any other kind.</summary>
+    private static string? StringOf(JsonElement? value) =>
+        value is JsonElement element && element.ValueKind == JsonValueKind.String ? element.GetString() : null;
+
+    /// <summary>
+    /// The <c>issue</c> of the <c>details</c> entry whose <c>field</c> is
+    /// <paramref name="field"/>, or null.
+    /// </summary>
+    private static string? DetailIssue(JsonElement? details, string field)
+    {
+        if (details is not JsonElement list || list.ValueKind != JsonValueKind.Array)
+        {
+            return null;
+        }
+        foreach (JsonElement entry in list.EnumerateArray())
+        {
+            if (entry.ValueKind == JsonValueKind.Object
+                && entry.TryGetProperty("field", out JsonElement name)
+                && name.ValueKind == JsonValueKind.String && name.GetString() == field
+                && entry.TryGetProperty("issue", out JsonElement issue))
+            {
+                return StringOf(issue);
+            }
+        }
+        return null;
     }
 
     /// <summary>
