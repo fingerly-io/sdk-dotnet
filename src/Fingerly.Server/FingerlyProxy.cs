@@ -85,9 +85,8 @@ public sealed class FingerlyProxy : IDisposable
             "retry-after",
         };
 
-    private readonly string _key;
+    private readonly string _proxyKey;
     private readonly Keys.Scope _scope;
-    private readonly bool _usesProxyKey;
     private readonly string _upstreamUrl;
     private readonly Uri _upstreamUri;
     private readonly string? _path;
@@ -100,9 +99,9 @@ public sealed class FingerlyProxy : IDisposable
     /// <summary>
     /// Builds the proxy, validating every option first.
     /// </summary>
-    /// <param name="options">The settings; the key and <see cref="FingerlyProxyOptions.ClientIp"/> are required.</param>
+    /// <param name="options">The settings; <see cref="FingerlyProxyOptions.ProxyKey"/> and <see cref="FingerlyProxyOptions.ClientIp"/> are required.</param>
     /// <exception cref="ArgumentNullException"><paramref name="options"/> is null.</exception>
-    /// <exception cref="ArgumentException">A credential, path or callback is invalid.</exception>
+    /// <exception cref="ArgumentException">The proxy key is missing or malformed, or a path or callback is invalid.</exception>
     /// <exception cref="ArgumentOutOfRangeException">A limit is not positive.</exception>
     public FingerlyProxy(FingerlyProxyOptions options)
         : this(options, null)
@@ -119,30 +118,20 @@ public sealed class FingerlyProxy : IDisposable
         {
             throw new ArgumentNullException(nameof(options));
         }
-#pragma warning disable CS0618 // The deprecated mode is still supported until the next major version.
-        string? secretKey = options.SecretKey;
-#pragma warning restore CS0618
-        if (string.IsNullOrEmpty(options.ProxyKey) && string.IsNullOrEmpty(secretKey))
+        if (string.IsNullOrEmpty(options.ProxyKey))
         {
             throw new ArgumentException(
                 "A Fingerly proxy key is required", nameof(options));
-        }
-        if (!string.IsNullOrEmpty(options.ProxyKey) && !string.IsNullOrEmpty(secretKey))
-        {
-            throw new ArgumentException(
-                "Set ProxyKey or the deprecated SecretKey, not both", nameof(options));
         }
         if (options.ClientIp is null)
         {
             throw new ArgumentException("ClientIp is required", nameof(options));
         }
 
-        _usesProxyKey = !string.IsNullOrEmpty(options.ProxyKey);
-        _key = (_usesProxyKey ? options.ProxyKey : secretKey)!;
-        _scope = Keys.Parse(
-            _key,
-            _usesProxyKey ? Keys.Proxy : Keys.Secret,
-            _usesProxyKey ? nameof(options.ProxyKey) : "SecretKey");
+        // Only fly_px_{environment}_…: a secret, public or malformed key is a
+        // configuration error, so no other credential can ever go upstream.
+        _proxyKey = options.ProxyKey!;
+        _scope = Keys.Parse(_proxyKey, Keys.Proxy, nameof(options.ProxyKey));
         _upstreamUrl = Keys.Origin(
                 options.Upstream ?? Keys.DefaultEndpoint, options.AllowInsecureLoopback,
                 nameof(options.Upstream))
@@ -191,7 +180,7 @@ public sealed class FingerlyProxy : IDisposable
     /// <returns>A description safe to log.</returns>
     public override string ToString() =>
         "FingerlyProxy { Path = " + (_path ?? "(routed)") + ", Upstream = " + _upstreamUrl
-        + ", " + (_usesProxyKey ? "ProxyKey" : "SecretKey") + " = [redacted] }";
+        + ", ProxyKey = [redacted] }";
 
     /// <summary>
     /// Reports whether a path is one this proxy serves.
@@ -295,7 +284,7 @@ public sealed class FingerlyProxy : IDisposable
 
         IReadOnlyList<KeyValuePair<string, string>> cors = CorsHeaders(corsOrigin);
 
-        string? apiKey = UpstreamKeyFor(request.Header("X-API-Key"));
+        string? apiKey = PublicKeyFor(request.Header("X-API-Key"));
         if (apiKey is null)
         {
             return ProxyResponse.Refusal(401, "Unauthorized", cors);
@@ -512,20 +501,17 @@ public sealed class FingerlyProxy : IDisposable
     }
 
     /// <summary>
-    /// Decides which key to present upstream.
+    /// Checks the caller's key locally, on every request.
     /// </summary>
     /// <remarks>
-    /// With a proxy key the browser must supply a public key for the same
-    /// environment, which the proxy forwards alongside its own. The
-    /// deprecated secret-key mode authenticates on its own.
+    /// The caller must present <c>fly_pk_{environment}_…</c> for the proxy
+    /// key's environment, which the proxy forwards alongside its own. A
+    /// missing header, a public key of another environment, a secret key or
+    /// anything else is refused before anything is forwarded.
     /// </remarks>
-    /// <returns>The key to forward, or null when the caller is unauthorised.</returns>
-    private string? UpstreamKeyFor(string? presented)
+    /// <returns>The public key to forward, or null when the caller is unauthorised.</returns>
+    private string? PublicKeyFor(string? presented)
     {
-        if (!_usesProxyKey)
-        {
-            return _key;
-        }
         if (!Keys.TryParse(presented, Keys.Public, out Keys.Scope browser))
         {
             return null;
@@ -577,10 +563,7 @@ public sealed class FingerlyProxy : IDisposable
             "X-Fingerly-User-Agent", Safe(request.Header("User-Agent")) ?? string.Empty);
         upstream.Headers.TryAddWithoutValidation("X-Fingerly-Proxy-Version", ProxyVersion);
         upstream.Headers.TryAddWithoutValidation("User-Agent", UserAgentValue);
-        if (_usesProxyKey)
-        {
-            upstream.Headers.TryAddWithoutValidation("X-Fingerly-Proxy-Key", _key);
-        }
+        upstream.Headers.TryAddWithoutValidation("X-Fingerly-Proxy-Key", _proxyKey);
         for (int i = 0; i < ForwardedClientHeaders.Length; i++)
         {
             string name = ForwardedClientHeaders[i];

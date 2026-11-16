@@ -37,21 +37,36 @@ public class FingerlyProxyTest
     }
 
     [Fact]
-    public void RefusesBothKindsOfKeyAtOnce()
+    public void ProxyOptionsHaveNoSecretKey()
     {
-#pragma warning disable CS0618 // The deprecated mode is what is under test.
-        Assert.Throws<ArgumentException>(() => new FingerlyProxy(new FingerlyProxyOptions
-        {
-            ProxyKey = ProxyKey,
-            SecretKey = "fly_sk_production_secret",
-            ClientIp = _ => "203.0.113.7",
-        }));
-#pragma warning restore CS0618
+        Assert.Null(typeof(FingerlyProxyOptions).GetProperty(
+            "SecretKey",
+            System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic
+                | System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Static
+                | System.Reflection.BindingFlags.IgnoreCase));
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    public void RefusesToStartWithoutAProxyKey(string? key)
+    {
+        ArgumentException failure = Assert.Throws<ArgumentException>(
+            () => new FingerlyProxy(new FingerlyProxyOptions
+            {
+                ProxyKey = key,
+                ClientIp = _ => "203.0.113.7",
+            }));
+        Assert.Contains("proxy key is required", failure.Message, StringComparison.Ordinal);
     }
 
     [Theory]
     [InlineData("fly_sk_production_secret")]
     [InlineData("fly_pk_production_browser")]
+    [InlineData("fly_px_sandbox_proxy")]          // an unknown environment
+    [InlineData("fly_px_production_")]            // no suffix
+    [InlineData("fly_px_production_proxy\n")]     // a trailing newline
+    [InlineData("fly_px_production_pro xy")]
     [InlineData("nonsense")]
     public void RefusesAKeyThatIsNotAProxyKey(string key)
     {
@@ -351,29 +366,40 @@ public class FingerlyProxyTest
         ProxyResponse result = await proxy.HandleAsync(request);
 
         Assert.Equal(401, result.Status);
+        Assert.Equal("text/plain; charset=utf-8", Values(result, "Content-Type").Single());
+        Assert.Equal("no-store", Values(result, "Cache-Control").Single());
         Assert.Empty(upstream.Requests);
     }
 
-    [Fact]
-    public async Task TheDeprecatedSecretKeyModeAuthenticatesOnItsOwn()
+    [Theory]
+    [InlineData("fly_sk_production_secret")]
+    [InlineData("fly_sk_staging_secret")]
+    [InlineData("fly_sk_development_secret")]
+    public async Task NeverForwardsASecretKeyUpstream(string secret)
     {
         await using TestApi upstream = await TestApi.RespondAsync(200, "{}");
-#pragma warning disable CS0618 // The deprecated mode is what is under test.
-        using var proxy = new FingerlyProxy(new FingerlyProxyOptions
+        using FingerlyProxy proxy = Proxy(upstream.Origin);
+
+        ProxyRequest refused = Post(ProxyPath, "{}");
+        refused.AddHeader("X-API-Key", secret);
+        ProxyResponse result = await proxy.HandleAsync(refused);
+
+        Assert.Equal(401, result.Status);
+        Assert.Equal("text/plain; charset=utf-8", Values(result, "Content-Type").Single());
+        Assert.Equal("no-store", Values(result, "Cache-Control").Single());
+        Assert.Empty(upstream.Requests);
+
+        ProxyRequest accepted = Post(ProxyPath, "{}");
+        accepted.AddHeader("X-API-Key", PublicKey);
+        Assert.Equal(200, (await proxy.HandleAsync(accepted)).Status);
+
+        Assert.Single(upstream.Requests);
+        Assert.Equal(PublicKey, upstream.Requests[0].Header("X-API-Key"));
+        Assert.Equal(ProxyKey, upstream.Requests[0].Header("X-Fingerly-Proxy-Key"));
+        foreach (string value in upstream.Requests.SelectMany(sent => sent.Headers.Values))
         {
-            SecretKey = "fly_sk_production_secret",
-            Path = ProxyPath,
-            Upstream = upstream.Origin,
-            AllowInsecureLoopback = true,
-            ClientIp = _ => "203.0.113.7",
-        });
-#pragma warning restore CS0618
-
-        ProxyResponse result = await proxy.HandleAsync(Post(ProxyPath, "{}"));
-
-        Assert.Equal(200, result.Status);
-        Assert.Equal("fly_sk_production_secret", upstream.Requests[0].Header("X-API-Key"));
-        Assert.Null(upstream.Requests[0].Header("X-Fingerly-Proxy-Key"));
+            Assert.DoesNotContain("fly_sk_", value, StringComparison.Ordinal);
+        }
     }
 
     [Fact]

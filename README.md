@@ -343,8 +343,14 @@ fragment, space or control character. Plain HTTP is refused, except for
 `http://127.0.0.1`, `http://localhost` or `http://[::1]` (any port) when
 `AllowInsecureLoopback` is set, which is for a local test harness.
 
-The caller must present a public key from the same environment as the proxy
-key, or the request gets `401`. Requests without either `Origin` or a validated
+`ProxyKey` is required and must be a `fly_px_{production|staging|development}_…`
+key: a missing or malformed one throws `ArgumentException` when the proxy is
+built. On every request the caller's `X-API-Key` must be a public key,
+`fly_pk_…`, from the same environment as the proxy key. Anything else (no
+header, another environment, a secret `fly_sk_` key) gets `401` as
+`text/plain; charset=utf-8` with `Cache-Control: no-store`, and nothing is
+forwarded. Upstream receives `X-Fingerly-Proxy-Key` plus that public key as
+`X-API-Key`; a secret key is never sent. Requests without either `Origin` or a validated
 native `X-Fingerly-SDK-Platform` header (`ios`, `android`, `react-native`,
 `react-native-ios`, `react-native-android`, `flutter`, `flutter-ios`,
 `flutter-android`, `lynx-ios`, `lynx-android`, `capacitor`,

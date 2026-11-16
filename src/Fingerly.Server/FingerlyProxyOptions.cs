@@ -16,19 +16,16 @@ namespace Fingerly;
 public sealed class FingerlyProxyOptions
 {
     /// <summary>
-    /// A write-only credential, <c>fly_px_…</c>, held only on your server.
-    /// Required.
+    /// A write-only credential, <c>fly_px_{production|staging|development}_…</c>,
+    /// held only on your server. Required.
     /// </summary>
+    /// <remarks>
+    /// The proxy sends it upstream as <c>X-Fingerly-Proxy-Key</c> next to the
+    /// browser's public key, which must belong to the same environment. A
+    /// secret key is never accepted here and never sent upstream.
+    /// </remarks>
     [JsonIgnore]
     public string? ProxyKey { get; set; }
-
-    /// <summary>
-    /// The deprecated alternative to <see cref="ProxyKey"/>. Secret read keys
-    /// will be refused in the next major version; do not set both.
-    /// </summary>
-    [Obsolete("Use ProxyKey. Secret read keys will be refused in the next major version.")]
-    [JsonIgnore]
-    public string? SecretKey { get; set; }
 
     /// <summary>
     /// Resolves the visitor's address for one request: exactly one IPv4 or
@@ -118,13 +115,8 @@ public sealed class FingerlyProxyOptions
 
     /// <summary>Names the path and upstream; no key is ever included.</summary>
     /// <returns>A description safe to log.</returns>
-    public override string ToString()
-    {
-#pragma warning disable CS0618 // The deprecated key is still redacted.
-        string? secretKey = SecretKey;
-#pragma warning restore CS0618
-        return "FingerlyProxyOptions { Path = " + (Path ?? "(routed)") + ", Upstream = "
-            + (Upstream ?? "(default)") + ", ProxyKey = " + (string.IsNullOrEmpty(ProxyKey) ? "(unset)" : "[redacted]")
-            + ", SecretKey = " + (string.IsNullOrEmpty(secretKey) ? "(unset)" : "[redacted]") + " }";
-    }
+    public override string ToString() =>
+        "FingerlyProxyOptions { Path = " + (Path ?? "(routed)") + ", Upstream = "
+        + (Upstream ?? "(default)") + ", ProxyKey = "
+        + (string.IsNullOrEmpty(ProxyKey) ? "(unset)" : "[redacted]") + " }";
 }
