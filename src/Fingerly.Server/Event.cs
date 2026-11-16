@@ -15,11 +15,20 @@ public sealed class EventTrigger
     /// <summary>Native device could have offered hardware attestation proof and did not.</summary>
     public const string SignalAttestationMissing = "attestation_missing";
 
+    /// <summary>Unproven or rejected native report naming an install an attested key owns.</summary>
+    public const string SignalAttestationDowngrade = "attestation_downgrade";
+
     /// <summary>Reported hardware, OS or runtime realms contradict each other.</summary>
     public const string SignalDeviceInconsistent = "device_inconsistent";
 
-    /// <summary>Required security collectors were omitted or selectively timed out.</summary>
+    /// <summary>Evidence a report always carries is missing: a required native security source or the web worker-realm cross-check.</summary>
     public const string SignalReportIncomplete = "report_incomplete";
+
+    /// <summary>Native security source ran but lists probes that threw, were denied or timed out.</summary>
+    public const string SignalProbeErrors = "probe_errors";
+
+    /// <summary>Browser report without <c>Sec-Fetch-*</c> headers from a browser that always sends them.</summary>
+    public const string SignalFetchMetadataMissing = "fetch_metadata_missing";
 
     /// <summary>Runtime code or natives were patched or tampered with.</summary>
     public const string SignalTampering = "tampering";
@@ -37,8 +46,11 @@ public sealed class EventTrigger
     public static IReadOnlyList<string> V3Signals { get; } = new[]
     {
         SignalAttestationFailed,
+        SignalAttestationDowngrade,
         SignalDeviceInconsistent,
         SignalReportIncomplete,
+        SignalProbeErrors,
+        SignalFetchMetadataMissing,
         SignalTampering,
         SignalCustomRootCa,
         SignalSecondaryUserProfile,

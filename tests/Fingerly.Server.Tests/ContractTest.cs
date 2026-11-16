@@ -193,8 +193,11 @@ public class ContractTest
               "suspect_level": "high",
               "triggers": [
                 {"signal": "attestation_failed", "group": "attestation_failed", "weight": 40, "confidence": "high"},
+                {"signal": "attestation_downgrade", "group": "attestation_failed", "weight": 30, "confidence": "high"},
                 {"signal": "device_inconsistent", "weight": 20, "confidence": "high"},
                 {"signal": "report_incomplete", "weight": 15, "confidence": "medium"},
+                {"signal": "probe_errors", "group": "report_incomplete", "weight": 4, "confidence": "low"},
+                {"signal": "fetch_metadata_missing", "group": "bot", "weight": 2, "confidence": "low"},
                 {"signal": "tampering", "weight": 25, "confidence": "high"},
                 {"signal": "custom_root_ca", "weight": 30, "confidence": "high"},
                 {"signal": "secondary_user_profile", "weight": 5, "confidence": "low"}
@@ -211,8 +214,11 @@ public class ContractTest
         Assert.Equal("unavailable", stored.State);
         Assert.Equal("unidentifiable_device", stored.Reason);
         Assert.Equal(88, stored.SuspectScore);
-        Assert.Equal(6, stored.Triggers.Count);
+        Assert.Equal(9, stored.Triggers.Count);
         Assert.Equal("attestation_failed", stored.Triggers[0].Group);
+        Assert.Equal("attestation_failed", stored.Triggers[1].Group);
+        Assert.Equal("report_incomplete", stored.Triggers[4].Group);
+        Assert.Equal("bot", stored.Triggers[5].Group);
         var actualSignals = new List<string>();
         foreach (EventTrigger trigger in stored.Triggers)
         {

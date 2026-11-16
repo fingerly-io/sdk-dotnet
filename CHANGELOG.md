@@ -6,8 +6,9 @@
   `fixtures.json`), removing the retired supplement endpoint and
   `deferred_token`.
 - Added `Event.Reason`, v3 `EventTrigger` anti-spoofing signal constants
-  (`attestation_failed`, `device_inconsistent`, `report_incomplete`,
-  `tampering`, `custom_root_ca`, `secondary_user_profile`), optional
+  (`attestation_failed`, `attestation_downgrade`, `device_inconsistent`,
+  `report_incomplete`, `probe_errors`, `fetch_metadata_missing`, `tampering`,
+  `custom_root_ca`, `secondary_user_profile`), optional
   `EventTrigger.Group`, and empty `VisitorId` (`""`) support for unidentifiable
   events.
 - Enforced the v3 first-party proxy relay contract: sanitize-and-restore of

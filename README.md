@@ -201,8 +201,11 @@ in `v: 3`.
 
 `EventTrigger.V3Signals` groups the `v: 3` anti-spoofing and integrity signal
 constants on `EventTrigger`: `SignalAttestationFailed` (`"attestation_failed"`),
+`SignalAttestationDowngrade` (`"attestation_downgrade"`),
 `SignalDeviceInconsistent` (`"device_inconsistent"`),
 `SignalReportIncomplete` (`"report_incomplete"`),
+`SignalProbeErrors` (`"probe_errors"`),
+`SignalFetchMetadataMissing` (`"fetch_metadata_missing"`),
 `SignalTampering` (`"tampering"`),
 `SignalCustomRootCa` (`"custom_root_ca"`) and
 `SignalSecondaryUserProfile` (`"secondary_user_profile"`).
