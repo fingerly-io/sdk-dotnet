@@ -355,7 +355,7 @@ as a success.
 When the upstream fails, the browser gets `504` ("Gateway timeout") if it did
 not answer within `Timeout` (5 seconds by default), and `502` ("Bad gateway")
 for anything else: refused, reset, truncated, larger than 4 MiB,
-undecodable, or a redirect (never followed). One line is logged per failure, without a stack trace or a key:
+undecodable, a redirect (never followed), or a status outside 200 to 599. One line is logged per failure, without a stack trace or a key:
 `AddFingerlyProxy` sends it to the application's `ILogger` (category
 `Fingerly.FingerlyProxy`) at warning level, and `FingerlyProxyOptions.Log`
 takes any other sink. A visitor who disconnects cancels the upstream call, and

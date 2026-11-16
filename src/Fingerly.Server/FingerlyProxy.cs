@@ -350,10 +350,10 @@ public sealed class FingerlyProxy : IDisposable
                 .SendAsync(upstream, HttpCompletionOption.ResponseHeadersRead, deadline.Token)
                 .ConfigureAwait(false);
             int status = (int)response.StatusCode;
-            // Only a direct, final answer of the pinned URL is relayed: any
-            // redirect, or an answer for another URL (a handler that followed
-            // one anyway), is a 502.
-            if ((status >= 300 && status < 400)
+            // Only a direct, final answer of the pinned URL is relayed: a
+            // status outside 200 to 599, any redirect, or an answer for
+            // another URL (a handler that followed one anyway) is a 502.
+            if (status < 200 || status > 599 || (status >= 300 && status < 400)
                 || !Uri.Equals(upstream.RequestUri, _upstreamUri)
                 || (response.RequestMessage is not null
                     && !Uri.Equals(response.RequestMessage.RequestUri, _upstreamUri)))

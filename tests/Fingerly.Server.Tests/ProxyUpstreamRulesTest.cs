@@ -162,6 +162,43 @@ public class ProxyUpstreamRulesTest
         Assert.DoesNotContain("elsewhere", Encoding.UTF8.GetString(result.Body.ToArray()), StringComparison.Ordinal);
     }
 
+    [Theory]
+    [InlineData(600)]
+    [InlineData(700)]
+    [InlineData(999)]
+    [InlineData(300)]
+    [InlineData(304)]
+    [InlineData(399)]
+    public async Task AnUpstreamStatusThatIsNotADirectAnswerIsABadGateway(int status)
+    {
+        await using TestApi upstream = await TestApi.StartAsync(context =>
+        {
+            context.Response.StatusCode = status;
+            return Task.CompletedTask;
+        });
+        using FingerlyProxy proxy = Proxy(upstream.Origin);
+
+        ProxyResponse result = await proxy.HandleAsync(Browser());
+
+        Assert.Equal(502, result.Status);
+        Assert.Equal("no-store", Values(result, "Cache-Control").Single());
+    }
+
+    [Theory]
+    [InlineData(200)]
+    [InlineData(400)]
+    [InlineData(429)]
+    [InlineData(599)]
+    public async Task AnInRangeStatusIsRelayed(int status)
+    {
+        await using TestApi upstream = await TestApi.RespondAsync(status, "{}");
+        using FingerlyProxy proxy = Proxy(upstream.Origin);
+
+        ProxyResponse result = await proxy.HandleAsync(Browser());
+
+        Assert.Equal(status, result.Status);
+    }
+
     [Fact]
     public async Task ACompressedAnswerThatInflatesPastTheCapIsABadGateway()
     {
