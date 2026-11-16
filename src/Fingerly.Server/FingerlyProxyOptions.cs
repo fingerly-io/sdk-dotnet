@@ -85,11 +85,15 @@ public sealed class FingerlyProxyOptions
 
     /// <summary>
     /// Supplies the message handler for the upstream call, for a custom
-    /// transport or a test double. Redirects are never followed either way.
+    /// transport or a test double.
     /// </summary>
     /// <remarks>
     /// The handler is not disposed with the proxy: whoever created it owns it.
-    /// Configure it like the shared pool used without one:
+    /// A <c>SocketsHttpHandler</c> or <c>HttpClientHandler</c> (directly or
+    /// under a <c>DelegatingHandler</c>) with <c>AllowAutoRedirect = true</c>,
+    /// the platform default, is refused at construction. Whatever the handler,
+    /// a 3xx answer, or an answer to any URL other than the pinned upstream
+    /// one, is answered 502. Configure it like the shared pool used without one:
     /// <c>AllowAutoRedirect = false</c>, <c>UseCookies = false</c>, automatic
     /// decompression, and on .NET
     /// <c>ActivityHeadersPropagator = DistributedContextPropagator.CreateNoOutputPropagator()</c>.

@@ -99,6 +99,10 @@ the `IHttpClientFactory` handler the same way. If you pass your own
 `Handler`, give it `AllowAutoRedirect = false`, `UseCookies = false`, automatic
 decompression and
 `ActivityHeadersPropagator = DistributedContextPropagator.CreateNoOutputPropagator()`.
+The proxy refuses, at construction, a `SocketsHttpHandler` or
+`HttpClientHandler` (directly or under a `DelegatingHandler`) left at
+`AllowAutoRedirect = true`, and answers 502 to any redirect or to an answer
+for another URL whatever the handler.
 
 ## Errors
 
@@ -350,8 +354,8 @@ as a success.
 
 When the upstream fails, the browser gets `504` ("Gateway timeout") if it did
 not answer within `Timeout` (5 seconds by default), and `502` ("Bad gateway")
-for anything else: refused, reset, truncated, larger than 4 MiB, or
-undecodable. One line is logged per failure, without a stack trace or a key:
+for anything else: refused, reset, truncated, larger than 4 MiB,
+undecodable, or a redirect (never followed). One line is logged per failure, without a stack trace or a key:
 `AddFingerlyProxy` sends it to the application's `ILogger` (category
 `Fingerly.FingerlyProxy`) at warning level, and `FingerlyProxyOptions.Log`
 takes any other sink. A visitor who disconnects cancels the upstream call, and

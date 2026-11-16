@@ -78,6 +78,91 @@ public class ProxyUpstreamRulesTest
     }
 
     [Fact]
+    public void AHandlerThatFollowsRedirectsIsRefused()
+    {
+        using var sockets = new SocketsHttpHandler();
+        using var client = new HttpClientHandler();
+        using var wrapped = new PassThrough(new SocketsHttpHandler());
+        foreach (HttpMessageHandler handler in new HttpMessageHandler[] { sockets, client, wrapped })
+        {
+            ArgumentException refused = Assert.Throws<ArgumentException>(() => new FingerlyProxy(
+                new FingerlyProxyOptions
+                {
+                    ProxyKey = ProxyKey,
+                    Path = ProxyPath,
+                    Handler = handler,
+                    ClientIp = _ => "203.0.113.7",
+                }));
+            Assert.DoesNotContain("rulesproxykey", refused.ToString(), StringComparison.Ordinal);
+        }
+    }
+
+    [Theory]
+    [InlineData(302)]
+    [InlineData(307)]
+    [InlineData(308)]
+    public async Task ASuppliedHandlerThatDoesNotFollowRedirectsGetsA502(int status)
+    {
+        await using TestApi elsewhere = await TestApi.RespondAsync(200, """{"from":"elsewhere"}""");
+        await using TestApi upstream = await Redirecting(status, elsewhere);
+        using var handler = new SocketsHttpHandler { AllowAutoRedirect = false };
+        using var proxy = new FingerlyProxy(new FingerlyProxyOptions
+        {
+            ProxyKey = ProxyKey,
+            Path = ProxyPath,
+            Upstream = upstream.Origin,
+            AllowInsecureLoopback = true,
+            Handler = handler,
+            ClientIp = _ => "203.0.113.7",
+        });
+
+        ProxyResponse result = await proxy.HandleAsync(Browser());
+
+        Assert.Empty(elsewhere.Requests);
+        Assert.Equal(502, result.Status);
+        Assert.Equal("no-store", Values(result, "Cache-Control").Single());
+        Assert.Empty(Values(result, "Location"));
+    }
+
+    [Fact]
+    public async Task TheSharedHandlerNeverFollowsARedirectAndAnswers502()
+    {
+        await using TestApi elsewhere = await TestApi.RespondAsync(200, "{}");
+        await using TestApi upstream = await Redirecting(307, elsewhere);
+        using FingerlyProxy proxy = Proxy(upstream.Origin);
+
+        ProxyResponse result = await proxy.HandleAsync(Browser());
+
+        Assert.Empty(elsewhere.Requests);
+        Assert.Single(upstream.Requests);
+        Assert.Equal(502, result.Status);
+        Assert.Empty(Values(result, "Location"));
+    }
+
+    [Fact]
+    public async Task AnAnswerForAnotherUrlIsABadGateway()
+    {
+        // A handler the proxy cannot inspect that follows a redirect itself.
+        await using TestApi elsewhere = await TestApi.RespondAsync(200, """{"from":"elsewhere"}""");
+        await using TestApi upstream = await Redirecting(307, elsewhere);
+        using var handler = new FollowsByHand(new SocketsHttpHandler { AllowAutoRedirect = false });
+        using var proxy = new FingerlyProxy(new FingerlyProxyOptions
+        {
+            ProxyKey = ProxyKey,
+            Path = ProxyPath,
+            Upstream = upstream.Origin,
+            AllowInsecureLoopback = true,
+            Handler = handler,
+            ClientIp = _ => "203.0.113.7",
+        });
+
+        ProxyResponse result = await proxy.HandleAsync(Browser());
+
+        Assert.Equal(502, result.Status);
+        Assert.DoesNotContain("elsewhere", Encoding.UTF8.GetString(result.Body.ToArray()), StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task ACompressedAnswerThatInflatesPastTheCapIsABadGateway()
     {
         byte[] bomb;
@@ -161,6 +246,14 @@ public class ProxyUpstreamRulesTest
         Assert.Equal(ProxyKey, sent.Header("X-Fingerly-Proxy-Key"));
     }
 
+    private static Task<TestApi> Redirecting(int status, TestApi target) =>
+        TestApi.StartAsync(context =>
+        {
+            context.Response.StatusCode = status;
+            context.Response.Headers.Location = target.Origin + "/collect";
+            return Task.CompletedTask;
+        });
+
     private static IReadOnlyList<string> Values(ProxyResponse response, string name) =>
         response.Headers
             .Where(header => string.Equals(header.Key, name, StringComparison.OrdinalIgnoreCase))
@@ -194,4 +287,41 @@ public class ProxyUpstreamRulesTest
             AllowInsecureLoopback = allowInsecureLoopback,
             ClientIp = _ => "203.0.113.7",
         });
+
+    /// <summary>A delegating handler that changes nothing.</summary>
+    private sealed class PassThrough : DelegatingHandler
+    {
+        internal PassThrough(HttpMessageHandler inner)
+            : base(inner)
+        {
+        }
+    }
+
+    /// <summary>
+    /// Follows one redirect itself, the way a custom handler the proxy cannot
+    /// inspect might, by re-sending the same message to the new location.
+    /// </summary>
+    private sealed class FollowsByHand : DelegatingHandler
+    {
+        internal FollowsByHand(HttpMessageHandler inner)
+            : base(inner)
+        {
+        }
+
+        protected override async Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            byte[] body = request.Content is null
+                ? Array.Empty<byte>()
+                : await request.Content.ReadAsByteArrayAsync(cancellationToken);
+            HttpResponseMessage response = await base.SendAsync(request, cancellationToken);
+            if ((int)response.StatusCode is >= 300 and < 400 && response.Headers.Location is Uri next)
+            {
+                response.Dispose();
+                var again = new HttpRequestMessage(request.Method, next) { Content = new ByteArrayContent(body) };
+                return await base.SendAsync(again, cancellationToken);
+            }
+            return response;
+        }
+    }
 }

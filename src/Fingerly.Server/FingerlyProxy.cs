@@ -89,6 +89,7 @@ public sealed class FingerlyProxy : IDisposable
     private readonly Keys.Scope _scope;
     private readonly bool _usesProxyKey;
     private readonly string _upstreamUrl;
+    private readonly Uri _upstreamUri;
     private readonly string? _path;
     private readonly HashSet<string> _allowedOrigins;
     private readonly TimeSpan _timeout;
@@ -157,6 +158,12 @@ public sealed class FingerlyProxy : IDisposable
         MaxBodyBytes = options.MaxBodyBytes;
         _timeout = Keys.Positive(options.Timeout, nameof(options.Timeout));
         _clientIp = options.ClientIp;
+        if (FollowsRedirects(options.Handler))
+        {
+            throw new ArgumentException(
+                "Handler must not follow redirects: set AllowAutoRedirect = false", nameof(options));
+        }
+        _upstreamUri = new Uri(_upstreamUrl, UriKind.Absolute);
         _httpClient = CreateHttpClient(options.Handler);
         _log = options.Log ?? fallbackLog;
     }
@@ -343,6 +350,16 @@ public sealed class FingerlyProxy : IDisposable
                 .SendAsync(upstream, HttpCompletionOption.ResponseHeadersRead, deadline.Token)
                 .ConfigureAwait(false);
             int status = (int)response.StatusCode;
+            // Only a direct, final answer of the pinned URL is relayed: any
+            // redirect, or an answer for another URL (a handler that followed
+            // one anyway), is a 502.
+            if ((status >= 300 && status < 400)
+                || !Uri.Equals(upstream.RequestUri, _upstreamUri)
+                || (response.RequestMessage is not null
+                    && !Uri.Equals(response.RequestMessage.RequestUri, _upstreamUri)))
+            {
+                return Failed(timedOut: false, new UpstreamAnswerException(status), cors);
+            }
             byte[] answer = Bodiless.Contains(status)
                 ? Array.Empty<byte>()
                 : await SharedHttp.ReadBodyAsync(response, deadline.Token).ConfigureAwait(false);
@@ -391,9 +408,47 @@ public sealed class FingerlyProxy : IDisposable
 
     /// <summary>One short, key-free description: the failure's type and nothing it carries.</summary>
     private static string Describe(Exception failure) =>
-        failure is ResponseTooLargeException
-            ? "response larger than " + SharedHttp.ResponseLimit + " bytes"
-            : (failure.InnerException ?? failure).GetType().Name;
+        failure switch
+        {
+            ResponseTooLargeException => "response larger than " + SharedHttp.ResponseLimit + " bytes",
+            UpstreamAnswerException answer => answer.Message,
+            _ => (failure.InnerException ?? failure).GetType().Name,
+        };
+
+    /// <summary>An upstream answer the proxy will not relay: a redirect, an out-of-range status, or another URL's answer.</summary>
+    private sealed class UpstreamAnswerException : Exception
+    {
+        internal UpstreamAnswerException(int status)
+            : base("unrelayable answer, status " + status)
+        {
+        }
+    }
+
+    /// <summary>
+    /// Reports whether a supplied handler, or a handler under its
+    /// <see cref="DelegatingHandler"/> chain, is set to follow redirects.
+    /// </summary>
+    private static bool FollowsRedirects(HttpMessageHandler? handler)
+    {
+        for (int depth = 0; handler is not null && depth < 64; depth++)
+        {
+            switch (handler)
+            {
+#if NET
+                case SocketsHttpHandler sockets:
+                    return sockets.AllowAutoRedirect;
+#endif
+                case HttpClientHandler client:
+                    return client.AllowAutoRedirect;
+                case DelegatingHandler delegating:
+                    handler = delegating.InnerHandler;
+                    break;
+                default:
+                    return false;
+            }
+        }
+        return false;
+    }
 
     /// <summary>
     /// Releases this proxy's client. The connection pool is shared, or the
