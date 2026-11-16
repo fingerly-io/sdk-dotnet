@@ -230,6 +230,9 @@ public static class FingerlyProxyEndpointRouteBuilderExtensions
         };
         // The browser SDK carries no user: a fallback "authenticated" policy
         // would answer every signed-out visitor with a sign-in redirect.
-        return endpoints.MapPost(path, handle).AllowAnonymous();
+        IEndpointConventionBuilder mapped = proxy.HasAllowedOrigins
+            ? endpoints.MapMethods(path, new[] { "POST", "OPTIONS" }, handle)
+            : endpoints.MapPost(path, handle);
+        return mapped.AllowAnonymous();
     }
 }

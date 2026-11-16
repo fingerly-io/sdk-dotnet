@@ -181,6 +181,7 @@ public class ServiceCollectionTest
             Content = new StringContent("{}", Encoding.UTF8, "application/json"),
         };
         request.Headers.TryAddWithoutValidation("X-API-Key", PublicKey);
+        request.Headers.TryAddWithoutValidation("Origin", "https://shop.example");
         HttpResponseMessage answer = await site.Client.SendAsync(request);
 
         Assert.Equal(HttpStatusCode.OK, answer.StatusCode);
@@ -206,6 +207,7 @@ public class ServiceCollectionTest
             Content = new StringContent("{}", Encoding.UTF8, "application/json"),
         };
         request.Headers.TryAddWithoutValidation("X-API-Key", PublicKey);
+        request.Headers.TryAddWithoutValidation("Origin", "https://shop.example");
         HttpResponseMessage answer = await site.Client.SendAsync(request);
 
         Assert.Equal(HttpStatusCode.OK, answer.StatusCode);
@@ -240,6 +242,7 @@ public class ServiceCollectionTest
 
         var request = new ProxyRequest("POST", "/k7x2qm4a") { Body = new System.IO.MemoryStream(Encoding.UTF8.GetBytes("{}")) };
         request.AddHeader("X-API-Key", PublicKey);
+        request.AddHeader("Origin", "https://shop.example");
         ProxyResponse answer = await proxy.HandleAsync(request);
 
         Assert.Equal(502, answer.Status);

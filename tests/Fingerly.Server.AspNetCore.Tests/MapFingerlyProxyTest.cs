@@ -19,6 +19,7 @@ public class MapFingerlyProxyTest
     [Fact]
     public async Task MapsTheProxysOwnPath()
     {
+        const string RawEnvelope = """{"v":3,"signals":{"price":142.50}}""";
         await using TestApi upstream = await TestApi.RespondAsync(200, """{"visitor_id":"v1"}""");
         using FingerlyProxy proxy = Proxy(upstream.Origin, "/k7x2qm4a");
         await using TestSite site = await TestSite.StartAsync(app =>
@@ -27,15 +28,14 @@ public class MapFingerlyProxyTest
             app.MapGet("/", () => "app");
         });
 
-        // The identification and the deferred report share the one path.
-        HttpResponseMessage identified = await Post(site, "/k7x2qm4a", """{"sdk":1}""");
-        HttpResponseMessage reported = await Post(site, "/k7x2qm4a", """{"token":"t1"}""");
+        HttpResponseMessage identified = await Post(site, "/k7x2qm4a", RawEnvelope);
+        HttpResponseMessage supplement = await Post(site, "/k7x2qm4a/events/r1/supplement", "{}");
 
         Assert.Equal(HttpStatusCode.OK, identified.StatusCode);
-        Assert.Equal(HttpStatusCode.OK, reported.StatusCode);
-        Assert.Equal("/api/v1/ingest", upstream.Requests[0].Path);
-        Assert.Equal("/api/v1/ingest", upstream.Requests[1].Path);
-        Assert.Equal("""{"token":"t1"}""", upstream.Requests[1].Text);
+        Assert.Equal(HttpStatusCode.NotFound, supplement.StatusCode);
+        RecordedRequest sent = Assert.Single(upstream.Requests);
+        Assert.Equal("/api/v1/ingest", sent.Path);
+        Assert.Equal(RawEnvelope, sent.Text);
     }
 
     /// <summary>
@@ -224,6 +224,7 @@ public class MapFingerlyProxyTest
             Content = new StringContent(body, Encoding.UTF8, "application/json"),
         };
         request.Headers.TryAddWithoutValidation("X-API-Key", PublicKey);
+        request.Headers.TryAddWithoutValidation("Origin", "https://shop.example");
         return site.Client.SendAsync(request);
     }
 

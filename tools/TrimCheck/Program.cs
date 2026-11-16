@@ -34,6 +34,7 @@ var request = new ProxyRequest("POST", "/k7x2qm4a")
     Body = new MemoryStream(Encoding.UTF8.GetBytes("{}")),
 };
 request.AddHeader("X-API-Key", "fly_pk_production_trimcheck");
+request.AddHeader("Origin", "https://shop.example");
 Console.WriteLine((await proxy.HandleAsync(request)).Status);
 
 Console.WriteLine("trim check ok");

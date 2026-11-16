@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Net.Http;
 using System.Text.Json.Serialization;
 
@@ -54,6 +55,12 @@ public sealed class FingerlyProxyOptions
     /// else; <c>UseFingerlyProxy</c> sees every request, so it needs it.
     /// </remarks>
     public string? Path { get; set; }
+
+    /// <summary>
+    /// Cross-origin page origins permitted to post to this proxy. Leave null or
+    /// empty when the proxy serves the page's own origin.
+    /// </summary>
+    public IReadOnlyList<string>? AllowedOrigins { get; set; }
 
     /// <summary>
     /// The API version forwarded upstream.

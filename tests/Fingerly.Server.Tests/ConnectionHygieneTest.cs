@@ -42,6 +42,7 @@ public class ConnectionHygieneTest
     {
         var request = new ProxyRequest("POST", "/p") { Body = new MemoryStream(Encoding.UTF8.GetBytes("{}")) };
         request.AddHeader("X-API-Key", PublicKey);
+        request.AddHeader("Origin", "https://shop.example");
         return request;
     }
 

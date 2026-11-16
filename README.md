@@ -294,22 +294,28 @@ const fingerly = await load({ apiKey: 'fly_pk_…', endpoints: '/k7x2qm4a' })
 
 ### What the proxy does
 
-The browser SDK posts both of its calls to that one path, and the proxy
-forwards each to Fingerly's one ingest URL, `https://api.fingerly.io/api/v1/ingest`
-(`ApiVersion` changes the version there and nowhere else). It answers only
-`POST` to the path itself, exactly: case-sensitive, and compared with the raw
-request target as the visitor sent it, so a trailing or doubled slash, a dot
-segment or percent encoding is a different path. The middleware passes such a
-request on to your application; the mapped endpoint answers it 404. Anything
-under the path gets the same, and any other method gets `405`. Event reads
-need a secret key and stay unreachable from a browser by construction.
+Client SDKs post a single identification envelope to that one path, and the
+proxy forwards its raw bytes verbatim to Fingerly's one ingest URL,
+`https://api.fingerly.io/api/v1/ingest` (`ApiVersion` changes the version there
+and nowhere else). It answers only `POST` (plus `OPTIONS` when `AllowedOrigins`
+is configured) to the path itself, exactly: case-sensitive, and compared with
+the raw request target as the visitor sent it, so a trailing or doubled slash, a
+dot segment or percent encoding is a different path. The middleware passes such
+a request on to your application; the mapped endpoint answers it 404. Anything
+under the path (including retired `/supplement` paths) gets the same, and any
+other method gets `405`. Event reads need a secret key and stay unreachable from
+a browser by construction.
 
-The browser must present a public key from the same environment as the proxy
-key, or the request gets `401`. Bodies over 1 MiB get `413`, enforced
-while reading rather than after buffering. Only the content type, the visitor
-metadata Fingerly needs, and an `Idempotency-Key` are forwarded; customer
-cookies, authorization headers and trace context never are. The proxy reports
-itself upstream as `dotnet/0.2.0`, which the dashboard shows per proxy.
+The caller must present a public key from the same environment as the proxy
+key, or the request gets `401`. Requests without either `Origin` or a validated
+native `X-Fingerly-SDK-Platform` header are rejected locally with `400`
+(`missing_origin`), and `X-Fingerly-Origin` is never synthesized from `Host` or
+the request URL. Bodies over 1 MiB get `413`, enforced while reading rather than
+after buffering. All incoming `X-Fingerly-*`, `Cookie`, `Authorization` and
+trace-context headers are stripped, restoring only a validated
+`X-Fingerly-SDK-Platform` alongside `Idempotency-Key`, `Sec-Fetch-*` and
+`Sec-CH-UA-*`. The proxy reports itself upstream as `dotnet/0.3.0`, which the
+dashboard shows per proxy.
 
 Only `Content-Type`, `X-Request-Id`, `RateLimit-Limit`, `RateLimit-Remaining`
 and `Retry-After` are relayed back, with `Cache-Control: no-store` added. A

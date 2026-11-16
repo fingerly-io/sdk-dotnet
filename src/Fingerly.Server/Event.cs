@@ -9,9 +9,48 @@ namespace Fingerly;
 /// <summary>One signal group that contributed to an event's suspect score.</summary>
 public sealed class EventTrigger
 {
-    /// <summary>The signal group, such as <c>vpn</c> or <c>bot</c>.</summary>
+    /// <summary>Hardware attestation failed cryptographic, chain, replay or ownership verification.</summary>
+    public const string SignalAttestationFailed = "attestation_failed";
+
+    /// <summary>Native device could have offered hardware attestation proof and did not.</summary>
+    public const string SignalAttestationMissing = "attestation_missing";
+
+    /// <summary>Reported hardware, OS or runtime realms contradict each other.</summary>
+    public const string SignalDeviceInconsistent = "device_inconsistent";
+
+    /// <summary>Required security collectors were omitted or selectively timed out.</summary>
+    public const string SignalReportIncomplete = "report_incomplete";
+
+    /// <summary>Runtime code or natives were patched or tampered with.</summary>
+    public const string SignalTampering = "tampering";
+
+    /// <summary>Browser tampering signal group key on stored event rows.</summary>
+    public const string SignalBrowserTampering = "browser_tampering";
+
+    /// <summary>TLS chain anchored at a non-WebPKI or user-installed root authority.</summary>
+    public const string SignalCustomRootCa = "custom_root_ca";
+
+    /// <summary>Managed Android work profile or secondary OS user profile without cloner indicators.</summary>
+    public const string SignalSecondaryUserProfile = "secondary_user_profile";
+
+    /// <summary>The v3 anti-spoofing signal identifiers.</summary>
+    public static IReadOnlyList<string> V3Signals { get; } = new[]
+    {
+        SignalAttestationFailed,
+        SignalDeviceInconsistent,
+        SignalReportIncomplete,
+        SignalTampering,
+        SignalCustomRootCa,
+        SignalSecondaryUserProfile,
+    };
+
+    /// <summary>The signal or signal group, such as <c>vpn</c>, <c>tampering</c> or <c>attestation_failed</c>.</summary>
     [JsonPropertyName("signal")]
     public string? Signal { get; init; }
+
+    /// <summary>Optional group identifier when returned alongside a raw signal.</summary>
+    [JsonPropertyName("group")]
+    public string? Group { get; init; }
 
     /// <summary>The group's combined weight in this score.</summary>
     [JsonPropertyName("weight")]
@@ -42,7 +81,10 @@ public sealed class Event
     [JsonPropertyName("request_id")]
     public string? RequestId { get; init; }
 
-    /// <summary>The visitor the device was identified as.</summary>
+    /// <summary>
+    /// The visitor the device was identified as, or <c>""</c> when the
+    /// submission was unidentifiable.
+    /// </summary>
     [JsonPropertyName("visitor_id")]
     public string? VisitorId { get; init; }
 
@@ -56,6 +98,10 @@ public sealed class Event
     /// </summary>
     [JsonPropertyName("state")]
     public string? State { get; init; }
+
+    /// <summary>Why enrichment did not happen, on an unavailable event.</summary>
+    [JsonPropertyName("reason")]
+    public string? Reason { get; init; }
 
     /// <summary>The deployment the event came from.</summary>
     [JsonPropertyName("environment")]

@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.3.0
+
+- Synced the v3 single-call ingest contract snapshot (`openapi.json` and
+  `fixtures.json`), removing the retired supplement endpoint and
+  `deferred_token`.
+- Added `Event.Reason`, v3 `EventTrigger` anti-spoofing signal constants
+  (`attestation_failed`, `device_inconsistent`, `report_incomplete`,
+  `tampering`, `custom_root_ca`, `secondary_user_profile`), optional
+  `EventTrigger.Group`, and empty `VisitorId` (`""`) support for unidentifiable
+  events.
+- Enforced the v3 first-party proxy relay contract: sanitize-and-restore of
+  validated `X-Fingerly-SDK-Platform`, `400 missing_origin` when both `Origin`
+  and a validated native platform header are absent (never synthesizing
+  `X-Fingerly-Origin`), forwarding `X-Fingerly-Host`, `Sec-Fetch-*` and
+  `Sec-CH-UA-*`, and optional `AllowedOrigins` CORS preflight handling.
+
 ## 0.2.0
 
 - `Event.ProjectId` (`project_id`) is the Fingerly project an event belongs

@@ -119,6 +119,8 @@ public class FingerlyProxyTest
     [InlineData(ProxyPath + "//", false)]
     [InlineData("/" + ProxyPath, false)]                         // a doubled slash
     [InlineData(ProxyPath + "/admin", false)]                    // nothing under it
+    [InlineData(ProxyPath + "/supplement", false)]               // retired supplement subpath
+    [InlineData(ProxyPath + "/events/r1/supplement", false)]
     [InlineData(ProxyPath + "/api/v1/identify", false)]
     [InlineData("/k7x2qm4", false)]                              // a prefix of it
     [InlineData("/K7X2QM4A", false)]
@@ -218,9 +220,10 @@ public class FingerlyProxyTest
         await using TestApi upstream = await TestApi.RespondAsync(200, """{"visitor_id":"v1"}""");
         using FingerlyProxy proxy = Proxy(upstream.Origin);
 
-        ProxyRequest request = Post(ProxyPath, """{"payload":1}""");
+        ProxyRequest request = Post(ProxyPath, """{"payload":1}""", origin: null);
         request.AddHeader("X-API-Key", PublicKey);
         request.AddHeader("Origin", "https://shop.example");
+        request.AddHeader("Host", "shop.example");
         request.AddHeader("User-Agent", "Mozilla/5.0");
         request.AddHeader("Idempotency-Key", "idem-1");
         request.AddHeader("Cookie", "session=secret");
@@ -239,6 +242,7 @@ public class FingerlyProxyTest
         Assert.Equal(ProxyKey, sent.Header("X-Fingerly-Proxy-Key"));
         Assert.Equal("203.0.113.7", sent.Header("X-Fingerly-Client-IP"));
         Assert.Equal("https://shop.example", sent.Header("X-Fingerly-Origin"));
+        Assert.Equal("shop.example", sent.Header("X-Fingerly-Host"));
         Assert.Equal("Mozilla/5.0", sent.Header("X-Fingerly-User-Agent"));
         Assert.Equal("idem-1", sent.Header("Idempotency-Key"));
         Assert.Equal("dotnet/" + FingerlyClient.Version, sent.Header("X-Fingerly-Proxy-Version"));
@@ -251,20 +255,22 @@ public class FingerlyProxyTest
     }
 
     [Fact]
-    public async Task ForwardsTheDeferredReportToTheSameUrl()
+    public async Task PreservesRawBodyBytesVerbatimWithoutReencoding()
     {
+        const string RawEnvelope = """{"v":3,"signals":{"price":142.50,"order":[2,1],"space":1 }}""";
         await using TestApi upstream = await TestApi.RespondAsync(
-            202, """{"request_id":"abc","duplicate":false}""");
+            200, """{"request_id":"abc","visitor_id":"v1"}""");
         using FingerlyProxy proxy = Proxy(upstream.Origin);
 
-        ProxyRequest request = Post(ProxyPath, """{"token":"t1"}""");
+        ProxyRequest request = Post(ProxyPath, RawEnvelope);
         request.AddHeader("X-API-Key", PublicKey);
 
         ProxyResponse result = await proxy.HandleAsync(request);
 
-        Assert.Equal(202, result.Status);
+        Assert.Equal(200, result.Status);
         Assert.Equal("/api/v1/ingest", upstream.Requests[0].Path);
-        Assert.Equal("""{"token":"t1"}""", upstream.Requests[0].Text);
+        Assert.Equal(Encoding.UTF8.GetBytes(RawEnvelope), upstream.Requests[0].Body);
+        Assert.Equal(RawEnvelope, upstream.Requests[0].Text);
     }
 
     [Fact]
@@ -304,6 +310,8 @@ public class FingerlyProxyTest
 
     [Theory]
     [InlineData("POST", ProxyPath + "/admin")]
+    [InlineData("POST", ProxyPath + "/supplement")]
+    [InlineData("POST", ProxyPath + "/events/r1/supplement")]
     [InlineData("POST", "/other")]
     [InlineData("GET", "/other")]                                // the path is checked first
     public async Task RefusesAnyOtherPath(string method, string path)
@@ -319,6 +327,7 @@ public class FingerlyProxyTest
         ProxyResponse result = await proxy.HandleAsync(request);
 
         Assert.Equal(404, result.Status);
+        Assert.Equal("no-store", Values(result, "Cache-Control").Single());
         Assert.Empty(upstream.Requests);
     }
 
@@ -391,6 +400,7 @@ public class FingerlyProxyTest
             ContentLength = -1,
         };
         request.AddHeader("X-API-Key", PublicKey);
+        request.AddHeader("Origin", "https://shop.example");
 
         ProxyResponse result = await proxy.HandleAsync(request);
 
@@ -536,8 +546,9 @@ public class FingerlyProxyTest
         await using TestApi upstream = await TestApi.RespondAsync(200, "{}");
         using FingerlyProxy proxy = Proxy(upstream.Origin);
 
-        ProxyRequest request = Post(ProxyPath, "{}");
+        ProxyRequest request = Post(ProxyPath, "{}", origin: null);
         request.AddHeader("X-API-Key", PublicKey);
+        request.AddHeader("X-Fingerly-SDK-Platform", "ios");
         request.AddHeader("Content-Type", "text/plain" + Nul);
         request.AddHeader("Origin", "https://shop.example" + Bell);
 
@@ -545,7 +556,8 @@ public class FingerlyProxyTest
 
         Assert.Equal(200, result.Status);
         Assert.Equal("application/json", upstream.Requests[0].Header("Content-Type"));
-        Assert.Equal(string.Empty, upstream.Requests[0].Header("X-Fingerly-Origin"));
+        Assert.Null(upstream.Requests[0].Header("X-Fingerly-Origin"));
+        Assert.Equal("ios", upstream.Requests[0].Header("X-Fingerly-SDK-Platform"));
     }
 
     [Fact]
@@ -834,7 +846,7 @@ public class FingerlyProxyTest
         await using TestApi upstream = await TestApi.RespondAsync(200, "{}");
         using FingerlyProxy proxy = Proxy(upstream.Origin);
 
-        ProxyRequest request = Post(ProxyPath, "{}");
+        ProxyRequest request = Post(ProxyPath, "{}", origin: null);
         request.AddHeader("x-api-key", PublicKey);
         request.AddHeader("Origin", "https://a.example");
         request.AddHeader("origin", "https://b.example");
@@ -845,6 +857,234 @@ public class FingerlyProxyTest
         Assert.Equal(
             "https://a.example, https://b.example",
             upstream.Requests[0].Header("X-Fingerly-Origin"));
+    }
+
+    [Fact]
+    public async Task RefusesAnOriginlessBrowserPostWithoutSynthesizingOrigin()
+    {
+        await using TestApi upstream = await TestApi.RespondAsync(200, "{}");
+        using FingerlyProxy proxy = Proxy(upstream.Origin);
+
+        ProxyRequest request = Post(ProxyPath, "{}", origin: null);
+        request.AddHeader("X-API-Key", PublicKey);
+        request.AddHeader("Host", "shop.example");
+        request.AddHeader("Referer", "https://shop.example/checkout");
+
+        ProxyResponse result = await proxy.HandleAsync(request);
+
+        Assert.Equal(400, result.Status);
+        Assert.Equal("no-store", Values(result, "Cache-Control").Single());
+        Assert.Equal("application/json", Values(result, "Content-Type").Single());
+        using var json = System.Text.Json.JsonDocument.Parse(result.Body.ToArray());
+        Assert.Equal("missing_origin", json.RootElement.GetProperty("error").GetProperty("code").GetString());
+        Assert.Empty(upstream.Requests);
+    }
+
+    [Theory]
+    [InlineData("web")]
+    [InlineData("browser")]
+    [InlineData("IOS")]
+    [InlineData(" ios ")]
+    [InlineData("ios,android")]
+    [InlineData("electron")]
+    [InlineData("unknown")]
+    public async Task DiscardsInvalidSdkPlatformValuesAndRejectsWithoutOrigin(string invalidPlatform)
+    {
+        await using TestApi upstream = await TestApi.RespondAsync(200, "{}");
+        using FingerlyProxy proxy = Proxy(upstream.Origin);
+
+        ProxyRequest request = Post(ProxyPath, "{}", origin: null);
+        request.AddHeader("X-API-Key", PublicKey);
+        request.AddHeader("X-Fingerly-SDK-Platform", invalidPlatform);
+        request.AddHeader("Host", "shop.example");
+
+        ProxyResponse result = await proxy.HandleAsync(request);
+
+        Assert.Equal(400, result.Status);
+        Assert.Equal("no-store", Values(result, "Cache-Control").Single());
+        Assert.Empty(upstream.Requests);
+    }
+
+    [Fact]
+    public async Task DiscardsRepeatedSmuggledSdkPlatformHeaders()
+    {
+        await using TestApi upstream = await TestApi.RespondAsync(200, "{}");
+        using FingerlyProxy proxy = Proxy(upstream.Origin);
+
+        ProxyRequest request = Post(ProxyPath, "{}", origin: null);
+        request.AddHeader("X-API-Key", PublicKey);
+        request.AddHeader("X-Fingerly-SDK-Platform", "ios");
+        request.AddHeader("x-fingerly-sdk-platform", "android");
+
+        ProxyResponse result = await proxy.HandleAsync(request);
+
+        Assert.Equal(400, result.Status);
+        Assert.Empty(upstream.Requests);
+    }
+
+    [Theory]
+    [InlineData("ios")]
+    [InlineData("android")]
+    [InlineData("react-native")]
+    [InlineData("react-native-ios")]
+    [InlineData("react-native-android")]
+    [InlineData("flutter")]
+    [InlineData("flutter-ios")]
+    [InlineData("flutter-android")]
+    [InlineData("lynx-ios")]
+    [InlineData("lynx-android")]
+    [InlineData("capacitor")]
+    [InlineData("kotlin-multiplatform")]
+    public async Task ForwardsValidNativeSdkPlatformsWithoutOriginOrSynthesizedOrigin(string platform)
+    {
+        await using TestApi upstream = await TestApi.RespondAsync(200, """{"visitor_id":"v_native"}""");
+        using FingerlyProxy proxy = Proxy(upstream.Origin);
+
+        ProxyRequest request = Post(ProxyPath, """{"v":3}""", origin: null);
+        request.AddHeader("X-API-Key", PublicKey);
+        request.AddHeader("x-FiNgErLy-SdK-pLaTfOrM", platform);
+        request.AddHeader("Host", "shop.example");
+
+        ProxyResponse result = await proxy.HandleAsync(request);
+
+        Assert.Equal(200, result.Status);
+        RecordedRequest sent = Assert.Single(upstream.Requests);
+        Assert.Equal(platform, sent.Header("X-Fingerly-SDK-Platform"));
+        Assert.Null(sent.Header("X-Fingerly-Origin"));
+        Assert.Equal("shop.example", sent.Header("X-Fingerly-Host"));
+    }
+
+    [Fact]
+    public async Task StripsAllCallerSpoofedFingerlyHeaders()
+    {
+        await using TestApi upstream = await TestApi.RespondAsync(200, "{}");
+        using FingerlyProxy proxy = Proxy(upstream.Origin);
+
+        ProxyRequest request = Post(ProxyPath, "{}", origin: null);
+        request.AddHeader("X-API-Key", PublicKey);
+        request.AddHeader("Origin", "https://shop.example");
+        request.AddHeader("Host", "shop.example");
+        request.AddHeader("X-Fingerly-Proxy-Key", "fly_px_production_attacker");
+        request.AddHeader("X-Fingerly-Key", "fly_px_production_attacker");
+        request.AddHeader("X-Fingerly-Client-IP", "198.51.100.250");
+        request.AddHeader("X-Fingerly-Forwarded-For", "198.51.100.250");
+        request.AddHeader("X-Fingerly-Origin", "https://evil.example");
+        request.AddHeader("X-Fingerly-Host", "evil.example");
+        request.AddHeader("X-Fingerly-Edge-TLS-Version", "TLSv1.3");
+        request.AddHeader("X-Fingerly-Edge-TLS-Cipher", "SPOOF");
+        request.AddHeader("X-Fingerly-Edge-HTTP-Proto", "HTTP/3");
+        request.AddHeader("X-Fingerly-SDK-Platform", "web");
+        request.AddHeader("X-Fingerly-Custom-Spoof", "1");
+
+        ProxyResponse result = await proxy.HandleAsync(request);
+
+        Assert.Equal(200, result.Status);
+        RecordedRequest sent = Assert.Single(upstream.Requests);
+        Assert.Equal(ProxyKey, sent.Header("X-Fingerly-Proxy-Key"));
+        Assert.Equal("203.0.113.7", sent.Header("X-Fingerly-Client-IP"));
+        Assert.Equal("https://shop.example", sent.Header("X-Fingerly-Origin"));
+        Assert.Equal("shop.example", sent.Header("X-Fingerly-Host"));
+        Assert.Null(sent.Header("X-Fingerly-Key"));
+        Assert.Null(sent.Header("X-Fingerly-Forwarded-For"));
+        Assert.Null(sent.Header("X-Fingerly-Edge-TLS-Version"));
+        Assert.Null(sent.Header("X-Fingerly-Edge-TLS-Cipher"));
+        Assert.Null(sent.Header("X-Fingerly-Edge-HTTP-Proto"));
+        Assert.Null(sent.Header("X-Fingerly-SDK-Platform"));
+        Assert.Null(sent.Header("X-Fingerly-Custom-Spoof"));
+    }
+
+    [Fact]
+    public async Task ForwardsFetchMetadataAndClientHintHeaders()
+    {
+        await using TestApi upstream = await TestApi.RespondAsync(200, "{}");
+        using FingerlyProxy proxy = Proxy(upstream.Origin);
+
+        ProxyRequest request = Post(ProxyPath, "{}");
+        request.AddHeader("X-API-Key", PublicKey);
+        request.AddHeader("Idempotency-Key", "idem-v3-1");
+        request.AddHeader("Sec-Fetch-Site", "same-origin");
+        request.AddHeader("Sec-Fetch-Mode", "cors");
+        request.AddHeader("Sec-Fetch-Dest", "empty");
+        request.AddHeader("Sec-CH-UA", "\"Chromium\";v=\"130\"");
+        request.AddHeader("Sec-CH-UA-Mobile", "?0");
+        request.AddHeader("Sec-CH-UA-Platform", "\"macOS\"");
+
+        ProxyResponse result = await proxy.HandleAsync(request);
+
+        Assert.Equal(200, result.Status);
+        RecordedRequest sent = Assert.Single(upstream.Requests);
+        Assert.Equal("idem-v3-1", sent.Header("Idempotency-Key"));
+        Assert.Equal("same-origin", sent.Header("Sec-Fetch-Site"));
+        Assert.Equal("cors", sent.Header("Sec-Fetch-Mode"));
+        Assert.Equal("empty", sent.Header("Sec-Fetch-Dest"));
+        Assert.Equal("\"Chromium\";v=\"130\"", sent.Header("Sec-CH-UA"));
+        Assert.Equal("?0", sent.Header("Sec-CH-UA-Mobile"));
+        Assert.Equal("\"macOS\"", sent.Header("Sec-CH-UA-Platform"));
+    }
+
+    [Fact]
+    public async Task RelaysRetryAfterOnConflictRequestInProgress()
+    {
+        await using TestApi upstream = await TestApi.StartAsync(async context =>
+        {
+            context.Response.StatusCode = 409;
+            context.Response.ContentType = "application/json";
+            context.Response.Headers["Retry-After"] = "1";
+            context.Response.Headers["X-Request-Id"] = "req-409";
+            await context.Response.WriteAsync("""{"error":{"code":"request_in_progress"}}""");
+        });
+        using FingerlyProxy proxy = Proxy(upstream.Origin);
+
+        ProxyRequest request = Post(ProxyPath, "{}");
+        request.AddHeader("X-API-Key", PublicKey);
+
+        ProxyResponse result = await proxy.HandleAsync(request);
+
+        Assert.Equal(409, result.Status);
+        Assert.Equal(new[] { "1" }, Values(result, "Retry-After"));
+        Assert.Equal(new[] { "req-409" }, Values(result, "X-Request-Id"));
+        Assert.Equal(new[] { "no-store" }, Values(result, "Cache-Control"));
+    }
+
+    [Fact]
+    public async Task HandlesConfiguredCrossOriginCorsPreflightAndPost()
+    {
+        await using TestApi upstream = await TestApi.RespondAsync(200, "{}");
+        using var proxy = new FingerlyProxy(new FingerlyProxyOptions
+        {
+            ProxyKey = ProxyKey,
+            Path = ProxyPath,
+            AllowedOrigins = new[] { "https://app.example" },
+            Upstream = upstream.Origin,
+            ClientIp = _ => "203.0.113.7",
+        });
+
+        var preflight = new ProxyRequest("OPTIONS", ProxyPath);
+        preflight.AddHeader("Origin", "https://app.example");
+        ProxyResponse preflightResult = await proxy.HandleAsync(preflight);
+
+        Assert.Equal(204, preflightResult.Status);
+        Assert.Equal(0, preflightResult.Body.Length);
+        Assert.Equal(new[] { "https://app.example" }, Values(preflightResult, "Access-Control-Allow-Origin"));
+        Assert.Equal(new[] { "Origin" }, Values(preflightResult, "Vary"));
+        Assert.Contains(
+            "x-fingerly-sdk-platform",
+            Values(preflightResult, "Access-Control-Allow-Headers").Single(),
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "retry-after",
+            Values(preflightResult, "Access-Control-Expose-Headers").Single(),
+            StringComparison.Ordinal);
+
+        var forbiddenPreflight = new ProxyRequest("OPTIONS", ProxyPath);
+        forbiddenPreflight.AddHeader("Origin", "https://evil.example");
+        Assert.Equal(403, (await proxy.HandleAsync(forbiddenPreflight)).Status);
+
+        ProxyRequest post = Post(ProxyPath, "{}", origin: "https://app.example");
+        post.AddHeader("X-API-Key", PublicKey);
+        ProxyResponse postResult = await proxy.HandleAsync(post);
+        Assert.Equal(200, postResult.Status);
+        Assert.Equal(new[] { "https://app.example" }, Values(postResult, "Access-Control-Allow-Origin"));
     }
 
     private const string CarriageReturn = "\r";
@@ -858,12 +1098,19 @@ public class FingerlyProxyTest
             .Select(header => header.Value)
             .ToList();
 
-    private static ProxyRequest Post(string path, string body) =>
-        new("POST", path)
+    private static ProxyRequest Post(string path, string body, string? origin = "https://shop.example")
+    {
+        var request = new ProxyRequest("POST", path)
         {
             Body = new MemoryStream(Encoding.UTF8.GetBytes(body)),
             ContentLength = Encoding.UTF8.GetByteCount(body),
         };
+        if (origin is not null)
+        {
+            request.AddHeader("Origin", origin);
+        }
+        return request;
+    }
 
     private static FingerlyProxy Proxy(string upstream, long maxBodyBytes = 1 << 20) =>
         new(new FingerlyProxyOptions
