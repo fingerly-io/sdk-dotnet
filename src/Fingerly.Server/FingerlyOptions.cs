@@ -22,10 +22,18 @@ public sealed class FingerlyOptions
     public string SecretKey { get; set; } = string.Empty;
 
     /// <summary>
-    /// Overrides the Fingerly API origin, for a local or self-hosted API. The
-    /// key still decides which kind of key is accepted.
+    /// Overrides the Fingerly API origin, for a local or self-hosted API:
+    /// <c>https://host</c> or <c>https://host:port</c>, with no path, query or
+    /// fragment. The key still decides which kind of key is accepted.
     /// </summary>
     public string? Endpoint { get; set; }
+
+    /// <summary>
+    /// Accepts a plain HTTP <see cref="Endpoint"/> on <c>127.0.0.1</c>,
+    /// <c>localhost</c> or <c>[::1]</c>, for a local test harness. Off by
+    /// default; any other plain HTTP endpoint is always refused.
+    /// </summary>
+    public bool AllowInsecureLoopback { get; set; }
 
     /// <summary>
     /// The API route version. The server must support whichever is chosen.

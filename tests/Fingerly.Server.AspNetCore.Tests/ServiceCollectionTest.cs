@@ -45,6 +45,7 @@ public class ServiceCollectionTest
         {
             options.SecretKey = SecretKey;
             options.Endpoint = api.Origin;
+            options.AllowInsecureLoopback = true;
         });
         await using ServiceProvider provider = services.BuildServiceProvider();
 
@@ -83,6 +84,7 @@ public class ServiceCollectionTest
         {
             options.SecretKey = SecretKey;
             options.Endpoint = api.Origin;
+            options.AllowInsecureLoopback = true;
         });
         await using ServiceProvider provider = services.BuildServiceProvider();
 
@@ -120,6 +122,7 @@ public class ServiceCollectionTest
         {
             options.SecretKey = SecretKey;
             options.Endpoint = api.Origin;
+            options.AllowInsecureLoopback = true;
         });
         await using ServiceProvider provider = services.BuildServiceProvider();
 

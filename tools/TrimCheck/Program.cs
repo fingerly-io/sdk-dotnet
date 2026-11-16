@@ -10,6 +10,7 @@ using var fingerly = new FingerlyClient(new FingerlyOptions
 {
     SecretKey = "fly_sk_production_trimcheck",
     Endpoint = "http://127.0.0.1:9",
+    AllowInsecureLoopback = true,
     Timeout = TimeSpan.FromMilliseconds(250),
 });
 

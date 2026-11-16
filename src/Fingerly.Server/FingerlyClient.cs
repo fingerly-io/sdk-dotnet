@@ -104,7 +104,8 @@ public sealed class FingerlyClient : IDisposable
         // or management key can never reach an API that would accept it.
         Keys.Parse(options.SecretKey, Keys.Secret, nameof(FingerlyOptions.SecretKey));
         string origin = Keys.Origin(
-            options.Endpoint ?? Keys.DefaultEndpoint, nameof(FingerlyOptions.Endpoint));
+            options.Endpoint ?? Keys.DefaultEndpoint, options.AllowInsecureLoopback,
+            nameof(FingerlyOptions.Endpoint));
         string apiVersion = Keys.ApiVersion(
             options.ApiVersion, nameof(FingerlyOptions.ApiVersion));
 

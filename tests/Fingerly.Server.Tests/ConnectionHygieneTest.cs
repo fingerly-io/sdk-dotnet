@@ -65,7 +65,7 @@ public class ConnectionHygieneTest
     public async Task TheClientNeverReplaysAnUpstreamCookie()
     {
         await using TestApi api = await UpstreamSettingACookie();
-        using var fingerly = new FingerlyClient(new FingerlyOptions { SecretKey = SecretKey, Endpoint = api.Origin });
+        using var fingerly = new FingerlyClient(new FingerlyOptions { SecretKey = SecretKey, Endpoint = api.Origin, AllowInsecureLoopback = true });
 
         for (int i = 0; i < 3; i++)
         {
@@ -92,7 +92,7 @@ public class ConnectionHygieneTest
 
         await using TestApi upstream = await UpstreamSettingACookie();
         using FingerlyProxy proxy = Proxy(upstream.Origin);
-        using var fingerly = new FingerlyClient(new FingerlyOptions { SecretKey = SecretKey, Endpoint = upstream.Origin });
+        using var fingerly = new FingerlyClient(new FingerlyOptions { SecretKey = SecretKey, Endpoint = upstream.Origin, AllowInsecureLoopback = true });
 
         await proxy.HandleAsync(Post());
         await fingerly.Events.GetAsync("0199a963-e400-7000-8000-000000000001");
@@ -116,7 +116,7 @@ public class ConnectionHygieneTest
         {
             using FingerlyProxy proxy = Proxy(upstream.Origin);
             await proxy.HandleAsync(Post());
-            using var fingerly = new FingerlyClient(new FingerlyOptions { SecretKey = SecretKey, Endpoint = upstream.Origin });
+            using var fingerly = new FingerlyClient(new FingerlyOptions { SecretKey = SecretKey, Endpoint = upstream.Origin, AllowInsecureLoopback = true });
             await fingerly.Events.GetAsync("0199a963-e400-7000-8000-000000000001");
         }
 

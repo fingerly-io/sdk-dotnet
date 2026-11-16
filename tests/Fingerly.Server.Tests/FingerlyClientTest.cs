@@ -39,6 +39,7 @@ public class FingerlyClientTest
         {
             SecretKey = "fly_pk_production_abc",
             Endpoint = "http://127.0.0.1:9",
+            AllowInsecureLoopback = true,
         }));
     }
 
@@ -97,7 +98,7 @@ public class FingerlyClientTest
     {
         await using TestApi api = await TestApi.RespondAsync(200, EventJson);
         using var fingerly = new FingerlyClient(
-            new FingerlyOptions { SecretKey = SecretKey, Endpoint = api.Origin });
+            new FingerlyOptions { SecretKey = SecretKey, Endpoint = api.Origin, AllowInsecureLoopback = true });
 
         await fingerly.Events.GetAsync("r1");
 
@@ -114,7 +115,7 @@ public class FingerlyClientTest
     {
         await using TestApi api = await TestApi.RespondAsync(500, """{"error":{"code":"boom"}}""");
         using var fingerly = new FingerlyClient(
-            new FingerlyOptions { SecretKey = SecretKey, Endpoint = api.Origin });
+            new FingerlyOptions { SecretKey = SecretKey, Endpoint = api.Origin, AllowInsecureLoopback = true });
 
         await Assert.ThrowsAsync<FingerlyApiException>(() => fingerly.Events.GetAsync("r1"));
 
@@ -130,7 +131,7 @@ public class FingerlyClientTest
             + "\"request_id\":\"" + SecretKey + "\"}";
         await using TestApi api = await TestApi.RespondAsync(400, leaked);
         using var fingerly = new FingerlyClient(
-            new FingerlyOptions { SecretKey = SecretKey, Endpoint = api.Origin });
+            new FingerlyOptions { SecretKey = SecretKey, Endpoint = api.Origin, AllowInsecureLoopback = true });
 
         FingerlyApiException failure = await Assert.ThrowsAsync<FingerlyApiException>(
             () => fingerly.Events.GetAsync("r1"));
@@ -151,7 +152,7 @@ public class FingerlyClientTest
             await context.Response.WriteAsync("<html>gateway</html>");
         });
         using var fingerly = new FingerlyClient(
-            new FingerlyOptions { SecretKey = SecretKey, Endpoint = api.Origin });
+            new FingerlyOptions { SecretKey = SecretKey, Endpoint = api.Origin, AllowInsecureLoopback = true });
 
         FingerlyApiException failure = await Assert.ThrowsAsync<FingerlyApiException>(
             () => fingerly.Events.GetAsync("r1"));
@@ -181,6 +182,7 @@ public class FingerlyClientTest
         {
             SecretKey = SecretKey,
             Endpoint = api.Origin,
+            AllowInsecureLoopback = true,
             Timeout = TimeSpan.FromMilliseconds(300),
         });
 
@@ -203,7 +205,7 @@ public class FingerlyClientTest
         });
         using var http = new HttpClient { Timeout = TimeSpan.FromMilliseconds(200) };
         using var fingerly = new FingerlyClient(
-            new FingerlyOptions { SecretKey = SecretKey, Endpoint = api.Origin, Timeout = TimeSpan.FromSeconds(30) },
+            new FingerlyOptions { SecretKey = SecretKey, Endpoint = api.Origin, AllowInsecureLoopback = true, Timeout = TimeSpan.FromSeconds(30) },
             http);
 
         await Assert.ThrowsAsync<FingerlyTimeoutException>(() => fingerly.Events.GetAsync("r1"));
@@ -220,6 +222,7 @@ public class FingerlyClientTest
         {
             SecretKey = SecretKey,
             Endpoint = "http://127.0.0.1:9",
+            AllowInsecureLoopback = true,
             Handler = new RefusingHandler(),
         });
 
@@ -252,6 +255,7 @@ public class FingerlyClientTest
         {
             SecretKey = SecretKey,
             Endpoint = api.Origin,
+            AllowInsecureLoopback = true,
             Timeout = TimeSpan.FromSeconds(30),
         });
 
@@ -274,7 +278,7 @@ public class FingerlyClientTest
             return Task.CompletedTask;
         });
         using var fingerly = new FingerlyClient(
-            new FingerlyOptions { SecretKey = SecretKey, Endpoint = api.Origin });
+            new FingerlyOptions { SecretKey = SecretKey, Endpoint = api.Origin, AllowInsecureLoopback = true });
 
         FingerlyApiException failure = await Assert.ThrowsAsync<FingerlyApiException>(
             () => fingerly.Events.GetAsync("r1"));
@@ -301,7 +305,7 @@ public class FingerlyClientTest
 
         using var following = new HttpClient(new HttpClientHandler { AllowAutoRedirect = true });
         using var fingerly = new FingerlyClient(
-            new FingerlyOptions { SecretKey = SecretKey, Endpoint = api.Origin }, following);
+            new FingerlyOptions { SecretKey = SecretKey, Endpoint = api.Origin, AllowInsecureLoopback = true }, following);
 
         FingerlyException refused = await Assert.ThrowsAsync<FingerlyException>(
             () => fingerly.Events.GetAsync("r1"));
@@ -317,7 +321,7 @@ public class FingerlyClientTest
         TimeSpan before = shared.Timeout;
 
         using (var fingerly = new FingerlyClient(
-            new FingerlyOptions { SecretKey = SecretKey, Endpoint = api.Origin }, shared))
+            new FingerlyOptions { SecretKey = SecretKey, Endpoint = api.Origin, AllowInsecureLoopback = true }, shared))
         {
             await fingerly.Events.GetAsync("r1");
         }
@@ -338,6 +342,7 @@ public class FingerlyClientTest
             SecretKey = SecretKey,
             // Port 9 is discard; nothing listens on it.
             Endpoint = "http://127.0.0.1:9",
+            AllowInsecureLoopback = true,
             Timeout = TimeSpan.FromSeconds(5),
         });
 
@@ -366,7 +371,7 @@ public class FingerlyClientTest
             }
         });
         using var supplied = new HttpClient();
-        var options = new FingerlyOptions { SecretKey = SecretKey, Endpoint = api.Origin };
+        var options = new FingerlyOptions { SecretKey = SecretKey, Endpoint = api.Origin, AllowInsecureLoopback = true };
 
         foreach (FingerlyClient fingerly in new[] { new FingerlyClient(options), new FingerlyClient(options, supplied) })
         {
@@ -394,6 +399,7 @@ public class FingerlyClientTest
         {
             SecretKey = SecretKey,
             Endpoint = api.Origin,
+            AllowInsecureLoopback = true,
             Timeout = TimeSpan.FromMilliseconds(400),
         });
 
@@ -413,7 +419,7 @@ public class FingerlyClientTest
             context.Response.ContentType = "application/json";
             await context.Response.WriteAsync("""{"error":{"code":"rate_limited"}}""");
         });
-        using var fingerly = new FingerlyClient(new FingerlyOptions { SecretKey = SecretKey, Endpoint = api.Origin });
+        using var fingerly = new FingerlyClient(new FingerlyOptions { SecretKey = SecretKey, Endpoint = api.Origin, AllowInsecureLoopback = true });
 
         FingerlyApiException failure = await Assert.ThrowsAsync<FingerlyApiException>(
             () => fingerly.Events.GetAsync("r1"));
@@ -434,7 +440,7 @@ public class FingerlyClientTest
             context.Response.Headers.RetryAfter = DateTimeOffset.UtcNow.AddSeconds(90).ToString("R");
             return Task.CompletedTask;
         });
-        using var fingerly = new FingerlyClient(new FingerlyOptions { SecretKey = SecretKey, Endpoint = api.Origin });
+        using var fingerly = new FingerlyClient(new FingerlyOptions { SecretKey = SecretKey, Endpoint = api.Origin, AllowInsecureLoopback = true });
 
         FingerlyApiException failure = await Assert.ThrowsAsync<FingerlyApiException>(
             () => fingerly.Events.GetAsync("r1"));
@@ -453,7 +459,7 @@ public class FingerlyClientTest
             context.Response.Headers["X-Request-Id"] = "moved";
             return Task.CompletedTask;
         });
-        using var fingerly = new FingerlyClient(new FingerlyOptions { SecretKey = SecretKey, Endpoint = api.Origin });
+        using var fingerly = new FingerlyClient(new FingerlyOptions { SecretKey = SecretKey, Endpoint = api.Origin, AllowInsecureLoopback = true });
 
         FingerlyApiException failure = await Assert.ThrowsAsync<FingerlyApiException>(
             () => fingerly.Events.GetAsync("r1"));
@@ -469,7 +475,7 @@ public class FingerlyClientTest
     public async Task NeverEchoesAnInvalidSuccessBody(string body)
     {
         await using TestApi api = await TestApi.RespondAsync(200, body);
-        using var fingerly = new FingerlyClient(new FingerlyOptions { SecretKey = SecretKey, Endpoint = api.Origin });
+        using var fingerly = new FingerlyClient(new FingerlyOptions { SecretKey = SecretKey, Endpoint = api.Origin, AllowInsecureLoopback = true });
 
         FingerlyException failure = await Assert.ThrowsAsync<FingerlyException>(
             () => fingerly.Events.GetAsync("r1"));
@@ -484,7 +490,7 @@ public class FingerlyClientTest
     public async Task RefusesARequestIdThatIsNotOne(string requestId)
     {
         await using TestApi api = await TestApi.RespondAsync(200, EventJson);
-        using var fingerly = new FingerlyClient(new FingerlyOptions { SecretKey = SecretKey, Endpoint = api.Origin });
+        using var fingerly = new FingerlyClient(new FingerlyOptions { SecretKey = SecretKey, Endpoint = api.Origin, AllowInsecureLoopback = true });
 
         await Assert.ThrowsAsync<ArgumentException>(() => fingerly.Events.GetAsync(requestId));
         Assert.Empty(api.Requests);

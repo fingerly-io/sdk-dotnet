@@ -143,7 +143,7 @@ public sealed class FingerlyProxy : IDisposable
             _key,
             _usesProxyKey ? Keys.Proxy : Keys.Secret,
             _usesProxyKey ? nameof(options.ProxyKey) : "SecretKey");
-        _upstreamUrl = Keys.ProxyOrigin(
+        _upstreamUrl = Keys.Origin(
                 options.Upstream ?? Keys.DefaultEndpoint, options.AllowInsecureLoopback,
                 nameof(options.Upstream))
             + "/api/" + Keys.ApiVersion(options.ApiVersion, nameof(options.ApiVersion))

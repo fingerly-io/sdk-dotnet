@@ -35,7 +35,11 @@ EventPage page = await fingerly.Events.ListAsync(
 
 Event reads require `fly_sk_{production|staging|development}_…` keys. Requests
 go to `https://api.fingerly.io`; `Endpoint` overrides that for a local
-API. Public, proxy, management, malformed and unsupported keys are rejected
+API and takes a bare origin only: `https://host` or `https://host:port`, with
+no credentials, path, query, fragment, space or control character. Plain HTTP
+is refused, except for `http://127.0.0.1`, `http://localhost` or
+`http://[::1]` (any port) when `AllowInsecureLoopback` is set, which is for a
+local test harness. The error never repeats the value. Public, proxy, management, malformed and unsupported keys are rejected
 before network access, by the constructor rather than by the first call.
 Requests do not follow redirects. `GetAsync` and `ListAsync` each perform one
 request and never retry. An empty, `.` or `..` request id is an
