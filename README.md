@@ -321,6 +321,10 @@ under the path (including retired `/supplement` paths) gets the same, and any
 other method gets `405`. Event reads need a secret key and stay unreachable from
 a browser by construction.
 
+`Upstream` overrides the API origin and must use HTTPS. Plain HTTP is refused,
+except for `http://127.0.0.1`, `http://localhost` or `http://[::1]` (any port)
+when `AllowInsecureLoopback` is set, which is for a local test harness.
+
 The caller must present a public key from the same environment as the proxy
 key, or the request gets `401`. Requests without either `Origin` or a validated
 native `X-Fingerly-SDK-Platform` header (`ios`, `android`, `react-native`,
@@ -328,10 +332,12 @@ native `X-Fingerly-SDK-Platform` header (`ios`, `android`, `react-native`,
 `flutter-android`, `lynx-ios`, `lynx-android`, `capacitor`,
 `kotlin-multiplatform`) are rejected locally with `400` (`missing_origin`), and
 `X-Fingerly-Origin` is never synthesized from `Host`, `Referer` or the request
-URL. Bodies over 1 MiB get `413`, enforced while reading rather than after
+URL. Only one channel goes upstream: when `Origin` is present it is sent as
+`X-Fingerly-Origin` and the platform header is dropped, as the API's direct
+path treats such a request as a browser one. Bodies over 1 MiB get `413`, enforced while reading rather than after
 buffering. All incoming `X-Fingerly-*`, `Cookie`, `Authorization` and
 trace-context headers are stripped, restoring only a validated
-`X-Fingerly-SDK-Platform` alongside `X-Fingerly-Host`, `Idempotency-Key`,
+`X-Fingerly-SDK-Platform` (for a request without `Origin`) alongside `X-Fingerly-Host`, `Idempotency-Key`,
 `Sec-Fetch-*` and `Sec-CH-UA-*`. The proxy reports itself upstream as
 `dotnet/0.3.0`, which the dashboard shows per proxy.
 

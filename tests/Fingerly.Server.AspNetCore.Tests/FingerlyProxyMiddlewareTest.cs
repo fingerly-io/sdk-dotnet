@@ -98,6 +98,7 @@ public class FingerlyProxyMiddlewareTest
         {
             ProxyKey = ProxyKey,
             Upstream = "http://127.0.0.1:9",
+            AllowInsecureLoopback = true,
             ClientIp = _ => "203.0.113.7",
         });
         WebApplicationBuilder builder = WebApplication.CreateSlimBuilder();
@@ -179,6 +180,7 @@ public class FingerlyProxyMiddlewareTest
             ProxyKey = ProxyKey,
             Path = "/k7x2qm4a",
             Upstream = upstream.Origin,
+            AllowInsecureLoopback = true,
             MaxBodyBytes = 64,
             ClientIp = _ => "203.0.113.7",
         });
@@ -234,6 +236,7 @@ public class FingerlyProxyMiddlewareTest
             ProxyKey = ProxyKey,
             Path = "/k7x2qm4a",
             Upstream = upstream.Origin,
+            AllowInsecureLoopback = true,
             ClientIp = request => request.Header("CF-Connecting-IP"),
         });
         await using TestSite site = await TestSite.StartAsync(app =>
@@ -309,6 +312,7 @@ public class FingerlyProxyMiddlewareTest
             ProxyKey = ProxyKey,
             Path = "/k7x2qm4a",
             Upstream = upstream.Origin,
+            AllowInsecureLoopback = true,
             ClientIp = request =>
             {
                 seen.Enqueue(request.RemoteAddress);
@@ -373,6 +377,7 @@ public class FingerlyProxyMiddlewareTest
             ProxyKey = ProxyKey,
             Path = path,
             Upstream = upstream,
+            AllowInsecureLoopback = true,
             ClientIp = _ => "203.0.113.7",
         });
 }

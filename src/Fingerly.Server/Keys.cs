@@ -113,6 +113,33 @@ internal static class Keys
         return value.TrimEnd('/');
     }
 
+    /// <summary>
+    /// Validates the proxy's upstream.
+    /// </summary>
+    /// <remarks>
+    /// The proxy key travels to this origin on every request, so on top of
+    /// <see cref="Origin"/> it must be HTTPS. Plain HTTP is accepted only for
+    /// <c>127.0.0.1</c>, <c>localhost</c> or <c>[::1]</c>, and only when
+    /// <paramref name="allowInsecureLoopback"/> is set.
+    /// </remarks>
+    /// <exception cref="ArgumentException">The value is not such an origin.</exception>
+    internal static string ProxyOrigin(string value, bool allowInsecureLoopback, string paramName)
+    {
+        string origin = Origin(value, paramName);
+        var uri = new Uri(origin, UriKind.Absolute);
+        if (uri.Scheme == Uri.UriSchemeHttp)
+        {
+            bool loopback = uri.Host == "127.0.0.1" || uri.Host == "localhost" || uri.Host == "[::1]";
+            if (!loopback || !allowInsecureLoopback)
+            {
+                throw new ArgumentException(
+                    "Upstream must use HTTPS; plain HTTP is accepted only for 127.0.0.1, "
+                    + "localhost or [::1] with AllowInsecureLoopback set", paramName);
+            }
+        }
+        return origin;
+    }
+
     /// <summary>Validates an API route version before it is spliced into a URL.</summary>
     /// <exception cref="ArgumentException">The version is not of that shape.</exception>
     internal static string ApiVersion(string? version, string paramName)

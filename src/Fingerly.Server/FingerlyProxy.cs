@@ -142,8 +142,9 @@ public sealed class FingerlyProxy : IDisposable
             _key,
             _usesProxyKey ? Keys.Proxy : Keys.Secret,
             _usesProxyKey ? nameof(options.ProxyKey) : "SecretKey");
-        _upstreamUrl = Keys.Origin(
-                options.Upstream ?? Keys.DefaultEndpoint, nameof(options.Upstream))
+        _upstreamUrl = Keys.ProxyOrigin(
+                options.Upstream ?? Keys.DefaultEndpoint, options.AllowInsecureLoopback,
+                nameof(options.Upstream))
             + "/api/" + Keys.ApiVersion(options.ApiVersion, nameof(options.ApiVersion))
             + "/ingest";
         _path = options.Path is null ? null : NormalizePath(options.Path, nameof(options.Path));
@@ -481,10 +482,10 @@ public sealed class FingerlyProxy : IDisposable
     /// </summary>
     /// <remarks>
     /// Nothing is copied wholesale: all incoming <c>X-Fingerly-*</c>,
-    /// <c>Cookie</c> and <c>Authorization</c> headers are stripped, only a
-    /// validated <c>X-Fingerly-SDK-Platform</c> is restored, and
+    /// <c>Cookie</c> and <c>Authorization</c> headers are stripped,
     /// <c>X-Fingerly-Origin</c> is sent only when incoming <c>Origin</c> is
-    /// non-empty (never synthesized from <c>Host</c> or the request URL).
+    /// non-empty (never synthesized from <c>Host</c> or the request URL), and
+    /// a validated <c>X-Fingerly-SDK-Platform</c> is restored only when it is not.
     /// </remarks>
     private void ApplyUpstreamHeaders(
         HttpRequestMessage upstream,
@@ -501,11 +502,13 @@ public sealed class FingerlyProxy : IDisposable
 
         upstream.Headers.TryAddWithoutValidation("X-API-Key", apiKey);
         upstream.Headers.TryAddWithoutValidation("X-Fingerly-Client-IP", address);
+        // One channel only: a browser Origin wins, as it does on the API's
+        // direct path, and the API refuses a proxied request carrying both.
         if (origin is not null)
         {
             upstream.Headers.TryAddWithoutValidation("X-Fingerly-Origin", origin);
         }
-        if (sdkPlatform is not null)
+        else if (sdkPlatform is not null)
         {
             upstream.Headers.TryAddWithoutValidation("X-Fingerly-SDK-Platform", sdkPlatform);
         }

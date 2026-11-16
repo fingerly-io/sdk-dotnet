@@ -70,6 +70,13 @@ public sealed class FingerlyProxyOptions
     /// <summary>Overrides the API origin implied by the key.</summary>
     public string? Upstream { get; set; }
 
+    /// <summary>
+    /// Accepts a plain HTTP <see cref="Upstream"/> on <c>127.0.0.1</c>,
+    /// <c>localhost</c> or <c>[::1]</c>, for a local test harness. Off by
+    /// default; any other plain HTTP upstream is always refused.
+    /// </summary>
+    public bool AllowInsecureLoopback { get; set; }
+
     /// <summary>Larger request bodies are refused with 413. Defaults to 1 MiB.</summary>
     public long MaxBodyBytes { get; set; } = 1 << 20;
 

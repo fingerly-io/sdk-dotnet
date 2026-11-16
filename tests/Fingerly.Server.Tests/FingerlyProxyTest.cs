@@ -142,6 +142,7 @@ public class FingerlyProxyTest
         {
             ProxyKey = ProxyKey,
             Upstream = upstream.Origin,
+            AllowInsecureLoopback = true,
             ClientIp = _ => "203.0.113.7",
         });
 
@@ -170,6 +171,7 @@ public class FingerlyProxyTest
         {
             ProxyKey = ProxyKey,
             Upstream = "http://127.0.0.1:9",
+            AllowInsecureLoopback = true,
             ClientIp = _ => "203.0.113.7",
             Handler = new AnswerWithRequestId(value),
         });
@@ -283,6 +285,7 @@ public class FingerlyProxyTest
             Path = ProxyPath,
             ApiVersion = "v2",
             Upstream = upstream.Origin,
+            AllowInsecureLoopback = true,
             ClientIp = _ => "203.0.113.7",
         });
 
@@ -361,6 +364,7 @@ public class FingerlyProxyTest
             SecretKey = "fly_sk_production_secret",
             Path = ProxyPath,
             Upstream = upstream.Origin,
+            AllowInsecureLoopback = true,
             ClientIp = _ => "203.0.113.7",
         });
 #pragma warning restore CS0618
@@ -437,6 +441,7 @@ public class FingerlyProxyTest
             ProxyKey = ProxyKey,
             Path = ProxyPath,
             Upstream = upstream.Origin,
+            AllowInsecureLoopback = true,
             ClientIp = _ => address,
         });
         ProxyRequest request = Post(ProxyPath, "{}");
@@ -465,6 +470,7 @@ public class FingerlyProxyTest
             ProxyKey = ProxyKey,
             Path = ProxyPath,
             Upstream = upstream.Origin,
+            AllowInsecureLoopback = true,
             ClientIp = _ => address,
         });
         ProxyRequest request = Post(ProxyPath, "{}");
@@ -485,6 +491,7 @@ public class FingerlyProxyTest
             ProxyKey = ProxyKey,
             Path = ProxyPath,
             Upstream = upstream.Origin,
+            AllowInsecureLoopback = true,
             ClientIp = _ => throw new InvalidOperationException("no such header"),
             Log = lines.Add,
         });
@@ -509,6 +516,7 @@ public class FingerlyProxyTest
             ProxyKey = ProxyKey,
             Path = ProxyPath,
             Upstream = upstream.Origin,
+            AllowInsecureLoopback = true,
             ClientIp = request => request.Header("CF-Connecting-IP") ?? request.RemoteAddress,
         });
         ProxyRequest direct = Post(ProxyPath, "{}");
@@ -528,6 +536,7 @@ public class FingerlyProxyTest
             ProxyKey = ProxyKey,
             Path = ProxyPath,
             Upstream = upstream.Origin,
+            AllowInsecureLoopback = true,
             ClientIp = _ => "203.0.113.7" + CarriageReturn + NewLine + "X-Admin: yes",
         });
 
@@ -709,6 +718,7 @@ public class FingerlyProxyTest
             ProxyKey = ProxyKey,
             Path = ProxyPath,
             Upstream = upstream.Origin,
+            AllowInsecureLoopback = true,
             Timeout = TimeSpan.FromMilliseconds(300),
             ClientIp = _ => "203.0.113.7",
             Log = lines.Add,
@@ -744,6 +754,7 @@ public class FingerlyProxyTest
             ProxyKey = ProxyKey,
             Path = ProxyPath,
             Upstream = upstream.Origin,
+            AllowInsecureLoopback = true,
             Timeout = TimeSpan.FromMilliseconds(400),
             ClientIp = _ => "203.0.113.7",
         });
@@ -797,6 +808,7 @@ public class FingerlyProxyTest
             ProxyKey = ProxyKey,
             Path = ProxyPath,
             Upstream = "http://127.0.0.1:9",
+            AllowInsecureLoopback = true,
             ClientIp = _ => "203.0.113.7",
             Log = _ => throw new InvalidOperationException("broken logger"),
         });
@@ -827,6 +839,7 @@ public class FingerlyProxyTest
             ProxyKey = ProxyKey,
             Path = ProxyPath,
             Upstream = upstream.Origin,
+            AllowInsecureLoopback = true,
             ClientIp = _ => "203.0.113.7",
             Log = lines.Add,
         });
@@ -1056,6 +1069,7 @@ public class FingerlyProxyTest
             Path = ProxyPath,
             AllowedOrigins = new[] { "https://app.example" },
             Upstream = upstream.Origin,
+            AllowInsecureLoopback = true,
             ClientIp = _ => "203.0.113.7",
         });
 
@@ -1118,6 +1132,7 @@ public class FingerlyProxyTest
             ProxyKey = ProxyKey,
             Path = ProxyPath,
             Upstream = upstream,
+            AllowInsecureLoopback = true,
             MaxBodyBytes = maxBodyBytes,
             ClientIp = _ => "203.0.113.7",
         });

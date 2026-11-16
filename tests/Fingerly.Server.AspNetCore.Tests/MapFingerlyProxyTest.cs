@@ -234,6 +234,7 @@ public class MapFingerlyProxyTest
             ProxyKey = ProxyKey,
             Path = path,
             Upstream = upstream,
+            AllowInsecureLoopback = true,
             ClientIp = _ => "203.0.113.7",
         });
 }

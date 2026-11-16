@@ -168,6 +168,7 @@ public class ServiceCollectionTest
                 options.ProxyKey = ProxyKey;
                 options.Path = "/k7x2qm4a";
                 options.Upstream = upstream.Origin;
+                options.AllowInsecureLoopback = true;
                 options.ClientIp = _ => "203.0.113.7";
             }),
             app =>
@@ -198,6 +199,7 @@ public class ServiceCollectionTest
                 options.ProxyKey = ProxyKey;
                 options.Path = "/k7x2qm4a";
                 options.Upstream = upstream.Origin;
+                options.AllowInsecureLoopback = true;
                 options.ClientIp = _ => "203.0.113.7";
             }),
             app => app.MapFingerlyProxy());
@@ -235,6 +237,7 @@ public class ServiceCollectionTest
             options.ProxyKey = ProxyKey;
             options.Path = "/k7x2qm4a";
             options.Upstream = "http://127.0.0.1:9";
+            options.AllowInsecureLoopback = true;
             options.ClientIp = _ => "203.0.113.7";
         });
         await using ServiceProvider provider = services.BuildServiceProvider();
