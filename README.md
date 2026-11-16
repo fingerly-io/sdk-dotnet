@@ -317,13 +317,18 @@ Client SDKs post a single identification envelope to that one path, and the
 proxy forwards its raw bytes verbatim to Fingerly's one ingest URL,
 `https://api.fingerly.io/api/v1/ingest` (`ApiVersion` changes the version there
 and nowhere else). It answers only `POST` (plus `OPTIONS` when `AllowedOrigins`
-is configured) to the path itself, exactly: case-sensitive, and compared with
-the raw request target as the visitor sent it, so a trailing or doubled slash, a
-dot segment or percent encoding is a different path. The middleware passes such
-a request on to your application; the mapped endpoint answers it 404. Anything
-under the path (including retired `/supplement` paths) gets the same, and any
-other method gets `405`. Event reads need a secret key and stay unreachable from
-a browser by construction.
+is configured; the method is case-sensitive, so `post` is refused) to the path
+itself, exactly: case-sensitive, and compared with the raw request target as the
+visitor sent it (the text after the authority for an absolute-form target, not
+normalised), so a trailing or doubled slash, a dot segment or percent encoding
+is a different path. The middleware passes such a request on to your
+application; the mapped endpoint answers it 404. Anything under the path gets
+the same, and any other method gets `405` with `Allow`. Both adapters write
+that `404` and `405` themselves, with `Cache-Control: no-store`: the mapped
+endpoint takes every method so that routing never answers a wrong one. A path
+routing does not match at all never reaches the mapped endpoint and is your
+application's to answer. Event reads need a secret key and stay unreachable
+from a browser by construction.
 
 `Upstream` overrides the API origin and must use HTTPS. Plain HTTP is refused,
 except for `http://127.0.0.1`, `http://localhost` or `http://[::1]` (any port)

@@ -199,6 +199,76 @@ public class ProxyUpstreamRulesTest
         Assert.Equal(status, result.Status);
     }
 
+    [Theory]
+    [InlineData("post")]
+    [InlineData("Post")]
+    [InlineData("pOST")]
+    [InlineData("GET")]
+    [InlineData("PUT")]
+    public async Task OnlyAnExactPostIsForwarded(string method)
+    {
+        await using TestApi upstream = await TestApi.RespondAsync(200, "{}");
+        using FingerlyProxy proxy = Proxy(upstream.Origin);
+        var request = new ProxyRequest(method, ProxyPath) { Body = new MemoryStream(Encoding.UTF8.GetBytes("{}")) };
+        request.AddHeader("X-API-Key", PublicKey);
+        request.AddHeader("Origin", "https://shop.example");
+
+        ProxyResponse result = await proxy.HandleAsync(request);
+
+        Assert.Equal(405, result.Status);
+        Assert.Equal("no-store", Values(result, "Cache-Control").Single());
+        Assert.Equal("POST", Values(result, "Allow").Single());
+        Assert.Empty(upstream.Requests);
+    }
+
+    [Theory]
+    [InlineData("options")]
+    [InlineData("Options")]
+    public async Task ALowercaseOptionsIsNotAPreflight(string method)
+    {
+        await using TestApi upstream = await TestApi.RespondAsync(200, "{}");
+        using var proxy = new FingerlyProxy(new FingerlyProxyOptions
+        {
+            ProxyKey = ProxyKey,
+            Path = ProxyPath,
+            Upstream = upstream.Origin,
+            AllowInsecureLoopback = true,
+            AllowedOrigins = new[] { "https://app.example" },
+            ClientIp = _ => "203.0.113.7",
+        });
+        var request = new ProxyRequest(method, ProxyPath);
+        request.AddHeader("Origin", "https://app.example");
+
+        ProxyResponse result = await proxy.HandleAsync(request);
+
+        Assert.Equal(405, result.Status);
+        Assert.Equal("no-store", Values(result, "Cache-Control").Single());
+    }
+
+    [Fact]
+    public async Task EveryLocalRefusalIsUncacheable()
+    {
+        await using TestApi upstream = await TestApi.RespondAsync(200, "{}");
+        using FingerlyProxy proxy = Proxy(upstream.Origin);
+
+        var wrongPath = new ProxyRequest("POST", ProxyPath + "/");
+        var wrongMethod = new ProxyRequest("GET", ProxyPath);
+        var lowercase = new ProxyRequest("post", ProxyPath);
+        var options = new ProxyRequest("OPTIONS", ProxyPath);
+        var noKey = new ProxyRequest("POST", ProxyPath);
+        noKey.AddHeader("Origin", "https://shop.example");
+        var noOrigin = new ProxyRequest("POST", ProxyPath);
+        noOrigin.AddHeader("X-API-Key", PublicKey);
+
+        foreach (ProxyRequest request in new[] { wrongPath, wrongMethod, lowercase, options, noKey, noOrigin })
+        {
+            ProxyResponse result = await proxy.HandleAsync(request);
+            Assert.InRange(result.Status, 400, 499);
+            Assert.Equal("no-store", Values(result, "Cache-Control").Single());
+        }
+        Assert.Empty(upstream.Requests);
+    }
+
     [Fact]
     public async Task ACompressedAnswerThatInflatesPastTheCapIsABadGateway()
     {

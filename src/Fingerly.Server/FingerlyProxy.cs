@@ -268,7 +268,7 @@ public sealed class FingerlyProxy : IDisposable
         string? corsOrigin = origin is not null && _allowedOrigins.Contains(origin) ? origin : null;
 
         if (_allowedOrigins.Count > 0
-            && string.Equals(request.Method, "OPTIONS", StringComparison.OrdinalIgnoreCase))
+            && string.Equals(request.Method, "OPTIONS", StringComparison.Ordinal))
         {
             if (origin is not null && corsOrigin is null)
             {
@@ -282,7 +282,8 @@ public sealed class FingerlyProxy : IDisposable
             return ProxyResponse.Bodiless(204, preflightHeaders);
         }
 
-        if (!string.Equals(request.Method, "POST", StringComparison.OrdinalIgnoreCase))
+        // Methods are case-sensitive (RFC 9110): "post" is not POST.
+        if (!string.Equals(request.Method, "POST", StringComparison.Ordinal))
         {
             var allow = new List<KeyValuePair<string, string>>
             {

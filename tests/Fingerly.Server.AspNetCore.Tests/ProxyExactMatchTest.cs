@@ -21,6 +21,155 @@ public class ProxyExactMatchTest
     private const string PublicKey = "fly_pk_production_browser";
     private const string ProxyPath = "/k7x2qm4a";
 
+    [Theory]
+    [InlineData("GET")]
+    [InlineData("PUT")]
+    [InlineData("DELETE")]
+    [InlineData("OPTIONS")]
+    [InlineData("post")]
+    [InlineData("Post")]
+    public async Task AMappedProxyAnswersAWrongMethodItselfUncacheable(string method)
+    {
+        await using TestApi upstream = await TestApi.RespondAsync(200, "{}");
+        using FingerlyProxy proxy = Proxy(upstream.Origin, _ => "203.0.113.7");
+        await using TestSite site = await TestSite.StartAsync(app => app.MapFingerlyProxy(proxy));
+
+        string answer = await RawAsync(site, method + " " + ProxyPath + " HTTP/1.1", Browser, "{}");
+
+        Assert.StartsWith("HTTP/1.1 405", answer, StringComparison.Ordinal);
+        Assert.Contains("cache-control: no-store", answer.ToLowerInvariant(), StringComparison.Ordinal);
+        Assert.Contains("allow: post", answer.ToLowerInvariant(), StringComparison.Ordinal);
+        Assert.Empty(upstream.Requests);
+    }
+
+    [Theory]
+    [InlineData("GET")]
+    [InlineData("OPTIONS")]
+    [InlineData("post")]
+    public async Task TheMiddlewareAnswersAWrongMethodUncacheable(string method)
+    {
+        await using TestApi upstream = await TestApi.RespondAsync(200, "{}");
+        using FingerlyProxy proxy = Proxy(upstream.Origin, _ => "203.0.113.7");
+        await using TestSite site = await TestSite.StartAsync(app => app.UseFingerlyProxy(proxy));
+
+        string answer = await RawAsync(site, method + " " + ProxyPath + " HTTP/1.1", Browser, "{}");
+
+        Assert.StartsWith("HTTP/1.1 405", answer, StringComparison.Ordinal);
+        Assert.Contains("cache-control: no-store", answer.ToLowerInvariant(), StringComparison.Ordinal);
+        Assert.Empty(upstream.Requests);
+    }
+
+    [Fact]
+    public async Task AMappedProxyStillForwardsAnExactPost()
+    {
+        await using TestApi upstream = await TestApi.RespondAsync(200, "{}");
+        using FingerlyProxy proxy = Proxy(upstream.Origin, _ => "203.0.113.7");
+        await using TestSite site = await TestSite.StartAsync(app => app.MapFingerlyProxy(proxy));
+
+        string answer = await RawAsync(site, "POST " + ProxyPath + " HTTP/1.1", Browser, "{}");
+
+        Assert.StartsWith("HTTP/1.1 200", answer, StringComparison.Ordinal);
+        Assert.Single(upstream.Requests);
+    }
+
+    [Theory]
+    [InlineData("http://{host}/x/../k7x2qm4a")]
+    [InlineData("http://{host}/k7x2qm4%61")]
+    [InlineData("http://{host}/./k7x2qm4a")]
+    [InlineData("http://{host}//k7x2qm4a")]
+    [InlineData("http://{host}/k7x2qm4a/")]
+    [InlineData("http://{host}/k7x2qm4a;x=1")]
+    [InlineData("http://{host}/K7X2QM4A")]
+    [InlineData("/k7x2qm4a;x=1")]
+    [InlineData("/k7x2qm4a/.")]
+    [InlineData("/k7x2qm4a/%2e%2e/k7x2qm4a")]
+    [InlineData("/k7x2qm4a%2f")]
+    [InlineData("/k7x2qm4a%00")]
+    public async Task TheMiddlewarePassesARawTargetThatIsNotThePathAlong(string target)
+    {
+        await using TestApi upstream = await TestApi.RespondAsync(200, "{}");
+        using FingerlyProxy proxy = Proxy(upstream.Origin, _ => "203.0.113.7");
+        await using TestSite site = await TestSite.StartAsync(app =>
+        {
+            app.UseFingerlyProxy(proxy);
+            app.Run(context =>
+            {
+                context.Response.StatusCode = 418;
+                return Task.CompletedTask;
+            });
+        });
+        string sentTarget = target.Replace("{host}", site.Client.BaseAddress!.Authority, StringComparison.Ordinal);
+
+        string answer = await RawAsync(site, "POST " + sentTarget + " HTTP/1.1", Browser, "{}");
+
+        Assert.True(upstream.Requests.Count == 0, "forwarded upstream for raw target " + sentTarget);
+        Assert.DoesNotContain("HTTP/1.1 200", answer, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task TheMiddlewareForwardsAnExactAbsoluteFormTarget()
+    {
+        await using TestApi upstream = await TestApi.RespondAsync(200, "{}");
+        using FingerlyProxy proxy = Proxy(upstream.Origin, _ => "203.0.113.7");
+        await using TestSite site = await TestSite.StartAsync(app => app.UseFingerlyProxy(proxy));
+        string target = "http://" + site.Client.BaseAddress!.Authority + ProxyPath;
+
+        string answer = await RawAsync(site, "POST " + target + " HTTP/1.1", Browser, "{}");
+
+        Assert.StartsWith("HTTP/1.1 200", answer, StringComparison.Ordinal);
+        Assert.Single(upstream.Requests);
+    }
+
+    [Theory]
+    [InlineData("http://{host}/x/../k7x2qm4a")]
+    [InlineData("http://{host}/k7x2qm4%61")]
+    [InlineData("http://{host}/./k7x2qm4a")]
+    [InlineData("http://{host}/k7x2qm4a/")]
+    [InlineData("/K7X2QM4A")]
+    public async Task AMappedProxyRefusesARawTargetThatIsNotThePath(string target)
+    {
+        await using TestApi upstream = await TestApi.RespondAsync(200, "{}");
+        using FingerlyProxy proxy = Proxy(upstream.Origin, _ => "203.0.113.7");
+        await using TestSite site = await TestSite.StartAsync(app => app.MapFingerlyProxy(proxy));
+        string sentTarget = target.Replace("{host}", site.Client.BaseAddress!.Authority, StringComparison.Ordinal);
+
+        string answer = await RawAsync(site, "POST " + sentTarget + " HTTP/1.1", Browser, "{}");
+
+        Assert.True(upstream.Requests.Count == 0, "forwarded upstream for raw target " + sentTarget);
+        Assert.StartsWith("HTTP/1.1 404", answer, StringComparison.Ordinal);
+        Assert.Contains("cache-control: no-store", answer.ToLowerInvariant(), StringComparison.Ordinal);
+    }
+
+    // A path routing does not match at all never reaches the mapped proxy:
+    // the 404 is the application's (UseFingerlyProxy answers it itself).
+    [Fact]
+    public async Task AMappedProxyNeverSeesAPathRoutingDoesNotMatch()
+    {
+        await using TestApi upstream = await TestApi.RespondAsync(200, "{}");
+        using FingerlyProxy proxy = Proxy(upstream.Origin, _ => "203.0.113.7");
+        await using TestSite site = await TestSite.StartAsync(app => app.MapFingerlyProxy(proxy));
+
+        string answer = await RawAsync(site, "POST /k7x2qm4a;x=1 HTTP/1.1", Browser, "{}");
+
+        Assert.StartsWith("HTTP/1.1 404", answer, StringComparison.Ordinal);
+        Assert.Empty(upstream.Requests);
+    }
+
+    [Fact]
+    public async Task TheMiddlewareNeverForwardsANearMiss()
+    {
+        await using TestApi upstream = await TestApi.RespondAsync(200, "{}");
+        using FingerlyProxy proxy = Proxy(upstream.Origin, _ => "203.0.113.7");
+        await using TestSite site = await TestSite.StartAsync(app => app.UseFingerlyProxy(proxy));
+
+        foreach (string target in new[] { "/k7x2qm4a/", "/k7x2qm4a;x=1", "/K7X2QM4A", "/x/../k7x2qm4a" })
+        {
+            string answer = await RawAsync(site, "POST " + target + " HTTP/1.1", Browser, "{}");
+            Assert.StartsWith("HTTP/1.1 404", answer, StringComparison.Ordinal);
+        }
+        Assert.Empty(upstream.Requests);
+    }
+
     [Fact]
     public async Task TheQueryStringNeverTravelsUpstream()
     {

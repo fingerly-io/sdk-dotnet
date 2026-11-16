@@ -108,10 +108,18 @@ internal static class ProxyExchange
         }
         int query = raw!.IndexOf('?');
         string rawPath = query >= 0 ? raw.Substring(0, query) : raw;
-        if (!rawPath.StartsWith("/", StringComparison.Ordinal)
-            && Uri.TryCreate(rawPath, UriKind.Absolute, out Uri? absolute))
+        if (!rawPath.StartsWith("/", StringComparison.Ordinal))
         {
-            rawPath = absolute.AbsolutePath; // absolute-form, as a forward proxy sends it
+            // Absolute-form, as a forward proxy sends it: the path is the raw
+            // text after the authority, not normalised, so a dot segment or a
+            // percent escape there is as much a near miss as in origin-form.
+            int scheme = rawPath.IndexOf("://", StringComparison.Ordinal);
+            if (scheme < 0)
+            {
+                return false;
+            }
+            int slash = rawPath.IndexOf('/', scheme + 3);
+            rawPath = slash < 0 ? string.Empty : rawPath.Substring(slash);
         }
         string seen = (context.Request.PathBase.Value ?? string.Empty) + (context.Request.Path.Value ?? string.Empty);
         return string.Equals(rawPath, seen, StringComparison.Ordinal);
