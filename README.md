@@ -4,8 +4,8 @@ Server-side event reads, webhook verification and a same-origin proxy for
 .NET.
 
 ```sh
-dotnet add package Fingerly.Server
-dotnet add package Fingerly.Server.AspNetCore   # for the proxy and DI
+dotnet add package Fingerly.Server --version 0.3.0
+dotnet add package Fingerly.Server.AspNetCore --version 0.3.0   # for the proxy and DI
 ```
 
 ```csharp
@@ -21,7 +21,8 @@ var app = builder.Build();
 app.MapGet("/orders/{requestId}/check", async (string requestId, FingerlyClient fingerly, CancellationToken ct) =>
 {
     Event ev = await fingerly.Events.GetAsync(requestId, ct);
-    return ev.IsScored ? Results.Ok(ev.SuspectLevel) : Results.Ok("unscored");
+    if (string.IsNullOrEmpty(ev.VisitorId) || !ev.IsScored) return Results.Ok("review");
+    return Results.Ok(ev.SuspectLevel);
 });
 
 app.Run();
@@ -182,7 +183,21 @@ job. `IsEventNotFound` means a request id that was never issued, or one past
 retention, and is never pending.
 
 The archived document arrives moments after the event itself, so check
-`HasDocument` rather than assuming it is there.
+`HasDocument` rather than assuming it is there, and inspect `Document`
+(`JsonElement?`, containing allow-listed `risk`, `attestation`, `ip_network` and
+`velocity` fields with no raw signals, user agent or address). When a submission
+is unidentifiable (`identifiable == false`, such as insufficient entropy, a
+genuine embedded WebView, or an unmatched high-risk Web payload), `VisitorId` is
+`""`; there are no `deferred_token`, `deferred_signals` or `supplements` fields
+in `v: 3`.
+
+`EventTrigger.V3Signals` groups the `v: 3` anti-spoofing and integrity signal
+constants on `EventTrigger`: `SignalAttestationFailed` (`"attestation_failed"`),
+`SignalDeviceInconsistent` (`"device_inconsistent"`),
+`SignalReportIncomplete` (`"report_incomplete"`),
+`SignalTampering` (`"tampering"`),
+`SignalCustomRootCa` (`"custom_root_ca"`) and
+`SignalSecondaryUserProfile` (`"secondary_user_profile"`).
 
 ## Verify a backend action
 
@@ -308,14 +323,17 @@ a browser by construction.
 
 The caller must present a public key from the same environment as the proxy
 key, or the request gets `401`. Requests without either `Origin` or a validated
-native `X-Fingerly-SDK-Platform` header are rejected locally with `400`
-(`missing_origin`), and `X-Fingerly-Origin` is never synthesized from `Host` or
-the request URL. Bodies over 1 MiB get `413`, enforced while reading rather than
-after buffering. All incoming `X-Fingerly-*`, `Cookie`, `Authorization` and
+native `X-Fingerly-SDK-Platform` header (`ios`, `android`, `react-native`,
+`react-native-ios`, `react-native-android`, `flutter`, `flutter-ios`,
+`flutter-android`, `lynx-ios`, `lynx-android`, `capacitor`,
+`kotlin-multiplatform`) are rejected locally with `400` (`missing_origin`), and
+`X-Fingerly-Origin` is never synthesized from `Host`, `Referer` or the request
+URL. Bodies over 1 MiB get `413`, enforced while reading rather than after
+buffering. All incoming `X-Fingerly-*`, `Cookie`, `Authorization` and
 trace-context headers are stripped, restoring only a validated
-`X-Fingerly-SDK-Platform` alongside `Idempotency-Key`, `Sec-Fetch-*` and
-`Sec-CH-UA-*`. The proxy reports itself upstream as `dotnet/0.3.0`, which the
-dashboard shows per proxy.
+`X-Fingerly-SDK-Platform` alongside `X-Fingerly-Host`, `Idempotency-Key`,
+`Sec-Fetch-*` and `Sec-CH-UA-*`. The proxy reports itself upstream as
+`dotnet/0.3.0`, which the dashboard shows per proxy.
 
 Only `Content-Type`, `X-Request-Id`, `RateLimit-Limit`, `RateLimit-Remaining`
 and `Retry-After` are relayed back, with `Cache-Control: no-store` added. A
