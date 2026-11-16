@@ -115,10 +115,17 @@ public sealed class FingerlyClient : IDisposable
         _ownsHttpClient = owned;
         _httpClient = httpClient ?? CreateHttpClient(options.Handler);
         Events = new EventsService(this);
+        DeviceCheck = new DeviceCheckService(this);
     }
 
     /// <summary>Event reads under this client's secret key.</summary>
     public EventsService Events { get; }
+
+    /// <summary>
+    /// Reads and writes the Apple DeviceCheck bits of an iOS event's device,
+    /// by spending the token held for that event.
+    /// </summary>
+    public DeviceCheckService DeviceCheck { get; }
 
     /// <summary>Names the API; the secret key is never included.</summary>
     /// <returns>A description safe to log.</returns>
@@ -156,13 +163,35 @@ public sealed class FingerlyClient : IDisposable
     /// body included, and the body is read within
     /// <see cref="SharedHttp.ResponseLimit"/> whatever client sends it.
     /// </remarks>
-    internal async Task<byte[]> GetAsync(string path, CancellationToken cancellationToken)
+    internal Task<byte[]> GetAsync(string path, CancellationToken cancellationToken) =>
+        SendAsync(HttpMethod.Get, path, null, cancellationToken);
+
+    /// <summary>
+    /// Performs one authenticated request and returns the body.
+    /// </summary>
+    /// <remarks>
+    /// Never retries, like <see cref="GetAsync"/>. A fresh
+    /// <see cref="HttpRequestMessage"/> is built on every call, so a caller
+    /// that retries sends the identical request again.
+    /// </remarks>
+    /// <param name="method">The HTTP method.</param>
+    /// <param name="path">The path under the API base.</param>
+    /// <param name="json">A JSON body, or null to send none.</param>
+    /// <param name="cancellationToken">Cancels the call.</param>
+    internal async Task<byte[]> SendAsync(
+        HttpMethod method, string path, byte[]? json, CancellationToken cancellationToken)
     {
         var uri = new Uri(_baseUri, path);
-        using var request = new HttpRequestMessage(HttpMethod.Get, uri);
+        using var request = new HttpRequestMessage(method, uri);
         request.Headers.TryAddWithoutValidation("X-API-Key", _secretKey);
         request.Headers.TryAddWithoutValidation("Accept", "application/json");
         request.Headers.TryAddWithoutValidation("User-Agent", UserAgentValue);
+        if (json is not null)
+        {
+            var content = new ByteArrayContent(json);
+            content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/json");
+            request.Content = content;
+        }
 
         using CancellationTokenSource deadline =
             CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);

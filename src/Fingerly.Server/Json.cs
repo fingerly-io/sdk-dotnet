@@ -28,6 +28,9 @@ namespace Fingerly;
 [JsonSerializable(typeof(EventPage))]
 [JsonSerializable(typeof(WebhookEvent))]
 [JsonSerializable(typeof(ApiErrorEnvelope))]
+[JsonSerializable(typeof(DeviceCheckBits))]
+[JsonSerializable(typeof(DeviceCheckWrite))]
+[JsonSerializable(typeof(DeviceCheckWriteResult))]
 internal sealed partial class FingerlyJsonContext : JsonSerializerContext
 {
 }

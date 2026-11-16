@@ -142,7 +142,8 @@ A read answers `404` with one of two codes, each with its own check:
 - `IsEventNotFound`: `event_not_found`, the request id was never issued, or
   the event is past retention.
 
-The client never retries by itself. A deadline throws
+The client never retries by itself, except the
+[DeviceCheck calls](#devicecheck-bits). A deadline throws
 `FingerlyTimeoutException`; an unreachable API throws
 `FingerlyConnectionException`.
 
@@ -221,6 +222,64 @@ scores or visitor identifiers supplied by the browser. Tags correlate events;
 they do not replace your application's authentication or replay protection.
 Never put a personal identifier (user ID, email, install ID or advertising ID)
 in a tag: the server keeps tags in long-lived rollups.
+
+## DeviceCheck bits
+
+For an iOS identification whose App Attest evidence covered a DeviceCheck
+token, Fingerly holds the token for one hour, and your backend spends it once
+to read or to write the two bits Apple keeps for the device. The bits survive
+a reinstall and mean what you decide; Fingerly never reads them.
+
+```csharp
+DeviceCheckBits bits = await fingerly.DeviceCheck.QueryAsync(requestId, ct);
+// bits.Found, bits.Bit0, bits.Bit1, bits.LastUpdate ("YYYY-MM" or null)
+
+DeviceCheckWriteResult set = await fingerly.DeviceCheck.WriteAsync(
+    requestId, new DeviceCheckWrite { Bit0 = true }, ct);
+```
+
+Apple treats a DeviceCheck token as single-use, so a read and a write each
+need their own identification. A once-per-device free trial takes two:
+
+1. On the identification that asks for the trial, call `QueryAsync`. If the
+   bit says the device already had one, refuse it.
+2. Otherwise grant the trial and record the grant in your own data, so it
+   holds even before the device is marked.
+3. On the next identification from that install (the app can identify again
+   right after the grant), call `WriteAsync` with `Bit0 = true`.
+
+```csharp
+try
+{
+    DeviceCheckBits bits = await fingerly.DeviceCheck.QueryAsync(requestId, ct);
+    if (bits.Found && bits.Bit0) return "offer-paid-plan";
+}
+catch (FingerlyApiException e) when (e.Code == DeviceCheckErrors.NotHeld)
+{
+    // No token for this event: decide without the bits.
+}
+```
+
+A write needs `Bit0`, `Bit1` or both; one with neither throws
+`ArgumentException` and sends nothing. Failures are `FingerlyApiException`;
+compare `Code` with the `DeviceCheckErrors` constants:
+
+| Status | `DeviceCheckErrors` | Code |
+|---|---|---|
+| 404 | `NotHeld` | `device_check_not_held` |
+| 409 | `Spent` | `device_check_spent` |
+| 409 | `Busy` | `device_check_busy` |
+| 409 | `CredentialUnavailable` | `credential_unavailable` |
+| 422 | `BitsRequired` | `bits_required` |
+| 422 | `AppleRejected` | `apple_rejected`, with Apple's status in `AppleStatus` |
+| 503 | `Unavailable` | `device_check_unavailable` |
+
+These two calls are the only ones the client retries: after a `503` or a
+transport failure or timeout it sends the identical request again, up to two
+more times. Apple lets a token be retried only for the same request, and the
+API answers `409 device_check_spent` to a retry with the other operation or
+other bits. No other answer is retried. Never retry with a different request
+yourself; after a `device_check_spent`, use another identification.
 
 ## Webhooks
 
@@ -441,7 +500,8 @@ check step. Never put production secrets in fixtures.
 
 `FingerlyClient` holds the options; `EventsService` owns the reads and the list
 filters, and `Event`, `EventPage` and `EventListOptions` are what they speak
-in. `Webhooks` verifies signatures. `FingerlyProxy` holds every proxy decision,
+in. `DeviceCheckService` spends held DeviceCheck tokens, with
+`DeviceCheckBits`, `DeviceCheckWrite` and `DeviceCheckWriteResult`. `Webhooks` verifies signatures. `FingerlyProxy` holds every proxy decision,
 with `ProxyRequest` and `ProxyResponse` as the neutral shapes the hosts
 translate to. `SharedHttp` is the process-wide connection pool and reads every
 answer within its limit. `Keys` validates every caller-supplied option before

@@ -106,6 +106,37 @@ public class FingerlyApiException : FingerlyException
     public bool IsPending => Status == 404 && Code == "event_pending";
 
     /// <summary>
+    /// Apple's HTTP status for a <c>422 apple_rejected</c> DeviceCheck call,
+    /// read from the <c>apple_status</c> entry of <see cref="Details"/>, or
+    /// null for every other error.
+    /// </summary>
+    /// <remarks>See <see cref="DeviceCheckErrors"/> for the codes those calls answer.</remarks>
+    public int? AppleStatus
+    {
+        get
+        {
+            if (Code != DeviceCheckErrors.AppleRejected || Details is not JsonElement details
+                || details.ValueKind != JsonValueKind.Array)
+            {
+                return null;
+            }
+            foreach (JsonElement entry in details.EnumerateArray())
+            {
+                if (entry.ValueKind == JsonValueKind.Object
+                    && entry.TryGetProperty("field", out JsonElement name)
+                    && name.ValueKind == JsonValueKind.String && name.GetString() == "apple_status"
+                    && entry.TryGetProperty("issue", out JsonElement issue)
+                    && issue.ValueKind == JsonValueKind.String
+                    && int.TryParse(issue.GetString(), NumberStyles.None, CultureInfo.InvariantCulture, out int status))
+                {
+                    return status;
+                }
+            }
+            return null;
+        }
+    }
+
+    /// <summary>
     /// The seconds the API asked you to wait before trying again, from
     /// <c>Retry-After</c> (an HTTP date becomes seconds from now), or null
     /// when it sent none.

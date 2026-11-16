@@ -16,6 +16,12 @@
   and a validated native platform header are absent (never synthesizing
   `X-Fingerly-Origin`), forwarding `X-Fingerly-Host`, `Sec-Fetch-*` and
   `Sec-CH-UA-*`, and optional `AllowedOrigins` CORS preflight handling.
+- Added `fingerly.DeviceCheck`: `QueryAsync` and `WriteAsync` spend the
+  DeviceCheck token held for an iOS event to read or write the device's two
+  bits, retrying only a `503` or a transport failure with the identical
+  request. `DeviceCheckErrors` names the codes, and
+  `FingerlyApiException.AppleStatus` carries Apple's status on
+  `apple_rejected`.
 - `FingerlyProxy` requires `ProxyKey` and checks the caller's public key on
   every request; it accepts no secret key and never sends one upstream.
 
