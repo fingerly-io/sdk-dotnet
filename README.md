@@ -330,9 +330,11 @@ routing does not match at all never reaches the mapped endpoint and is your
 application's to answer. Event reads need a secret key and stay unreachable
 from a browser by construction.
 
-`Upstream` overrides the API origin and must use HTTPS. Plain HTTP is refused,
-except for `http://127.0.0.1`, `http://localhost` or `http://[::1]` (any port)
-when `AllowInsecureLoopback` is set, which is for a local test harness.
+`Upstream` overrides the API origin and takes a bare origin only:
+`https://host` or `https://host:port`, with no credentials, path, query,
+fragment, space or control character. Plain HTTP is refused, except for
+`http://127.0.0.1`, `http://localhost` or `http://[::1]` (any port) when
+`AllowInsecureLoopback` is set, which is for a local test harness.
 
 The caller must present a public key from the same environment as the proxy
 key, or the request gets `401`. Requests without either `Origin` or a validated
@@ -359,8 +361,10 @@ as a success.
 
 When the upstream fails, the browser gets `504` ("Gateway timeout") if it did
 not answer within `Timeout` (5 seconds by default), and `502` ("Bad gateway")
-for anything else: refused, reset, truncated, larger than 4 MiB,
-undecodable, a redirect (never followed), or a status outside 200 to 599. One line is logged per failure, without a stack trace or a key:
+for anything else: refused, reset, truncated, larger than 4 MiB, undecodable,
+a redirect (never followed), or a status outside 200 to 599. One line is
+logged per failure, naming the kind of failure only, without a stack trace, a
+key or the upstream's address:
 `AddFingerlyProxy` sends it to the application's `ILogger` (category
 `Fingerly.FingerlyProxy`) at warning level, and `FingerlyProxyOptions.Log`
 takes any other sink. A visitor who disconnects cancels the upstream call, and

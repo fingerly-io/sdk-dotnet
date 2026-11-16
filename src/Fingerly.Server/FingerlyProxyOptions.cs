@@ -67,7 +67,10 @@ public sealed class FingerlyProxyOptions
     /// </summary>
     public string ApiVersion { get; set; } = "v1";
 
-    /// <summary>Overrides the API origin implied by the key.</summary>
+    /// <summary>
+    /// Overrides the API origin implied by the key: <c>https://host</c> or
+    /// <c>https://host:port</c>, with no path, query or fragment.
+    /// </summary>
     public string? Upstream { get; set; }
 
     /// <summary>

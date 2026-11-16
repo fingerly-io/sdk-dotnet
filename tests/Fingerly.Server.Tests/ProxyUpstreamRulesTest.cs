@@ -77,6 +77,45 @@ public class ProxyUpstreamRulesTest
         using FingerlyProxy proxy = Proxy(upstream, allowInsecureLoopback: true);
     }
 
+    [Theory]
+    [InlineData("https://upstream.invalid")]
+    [InlineData("https://upstream.invalid/")]
+    [InlineData("https://upstream.invalid:8443")]
+    public void ABareHttpsOriginIsAccepted(string upstream)
+    {
+        using FingerlyProxy proxy = Proxy(upstream, allowInsecureLoopback: false);
+        Assert.Contains("https://upstream.invalid", proxy.ToString(), StringComparison.Ordinal);
+        Assert.Contains("/api/v1/ingest", proxy.ToString(), StringComparison.Ordinal);
+        Assert.DoesNotContain("//api", proxy.ToString(), StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("https://upstream.invalid/extra/prefix")]
+    [InlineData("https://upstream.invalid/a/../b")]
+    [InlineData("https://upstream.invalid/.")]
+    [InlineData("https://upstream.invalid//")]
+    [InlineData("https://upstream.invalid\\prefix")]
+    [InlineData("https://upstream.invalid\n")]
+    [InlineData("https://upstream.invalid ")]
+    [InlineData(" https://upstream.invalid")]
+    [InlineData("https://upstream.invalid\r\nx-injected: 1")]
+    [InlineData("https://upstream.invalid\t")]
+    [InlineData("https://upstream.invalid?")]
+    [InlineData("https://upstream.invalid?x=1")]
+    [InlineData("https://upstream.invalid#")]
+    [InlineData("https://upstream.invalid#x")]
+    [InlineData("https://user:pass@upstream.invalid")]
+    [InlineData("https://@upstream.invalid")]
+    [InlineData("ftp://upstream.invalid")]
+    [InlineData("upstream.invalid")]
+    [InlineData("")]
+    public void AnUpstreamThatIsNotABareOriginIsRefusedWithoutEchoingIt(string upstream)
+    {
+        ArgumentException refused = Assert.Throws<ArgumentException>(
+            () => Proxy(upstream, allowInsecureLoopback: true));
+        Assert.DoesNotContain("upstream.invalid", refused.Message, StringComparison.Ordinal);
+    }
+
     [Fact]
     public void AHandlerThatFollowsRedirectsIsRefused()
     {
@@ -270,6 +309,73 @@ public class ProxyUpstreamRulesTest
     }
 
     [Fact]
+    public async Task AFailureNamesNeitherTheKeyNorTheUpstream()
+    {
+        var lines = new List<string>();
+        await using TestApi upstream = await TestApi.StartAsync(context =>
+        {
+            context.Abort();
+            return Task.CompletedTask;
+        });
+        using var proxy = new FingerlyProxy(new FingerlyProxyOptions
+        {
+            ProxyKey = ProxyKey,
+            Path = ProxyPath,
+            Upstream = upstream.Origin,
+            AllowInsecureLoopback = true,
+            Log = lines.Add,
+            ClientIp = _ => "203.0.113.7",
+        });
+
+        ProxyResponse result = await proxy.HandleAsync(Browser());
+
+        Assert.Equal(502, result.Status);
+        AssertNamesNothing(result, lines);
+    }
+
+    [Fact]
+    public async Task AnUnreachableUpstreamIsNotNamedInTheAnswerOrTheLogLine()
+    {
+        var lines = new List<string>();
+        using var proxy = new FingerlyProxy(new FingerlyProxyOptions
+        {
+            ProxyKey = ProxyKey,
+            Path = ProxyPath,
+            Upstream = "http://127.0.0.1:1",
+            AllowInsecureLoopback = true,
+            Log = lines.Add,
+            ClientIp = _ => "203.0.113.7",
+        });
+
+        ProxyResponse result = await proxy.HandleAsync(Browser());
+
+        Assert.Equal(502, result.Status);
+        AssertNamesNothing(result, lines);
+    }
+
+    [Fact]
+    public async Task ARedirectFailureLineNamesNeitherTheUpstreamNorTheTarget()
+    {
+        var lines = new List<string>();
+        await using TestApi elsewhere = await TestApi.RespondAsync(200, "{}");
+        await using TestApi upstream = await Redirecting(307, elsewhere);
+        using var proxy = new FingerlyProxy(new FingerlyProxyOptions
+        {
+            ProxyKey = ProxyKey,
+            Path = ProxyPath,
+            Upstream = upstream.Origin,
+            AllowInsecureLoopback = true,
+            Log = lines.Add,
+            ClientIp = _ => "203.0.113.7",
+        });
+
+        ProxyResponse result = await proxy.HandleAsync(Browser());
+
+        Assert.Equal(502, result.Status);
+        AssertNamesNothing(result, lines);
+    }
+
+    [Fact]
     public async Task ACompressedAnswerThatInflatesPastTheCapIsABadGateway()
     {
         byte[] bomb;
@@ -351,6 +457,18 @@ public class ProxyUpstreamRulesTest
         }
         Assert.Equal("203.0.113.7", sent.Header("X-Fingerly-Client-IP"));
         Assert.Equal(ProxyKey, sent.Header("X-Fingerly-Proxy-Key"));
+    }
+
+    private static void AssertNamesNothing(ProxyResponse result, List<string> lines)
+    {
+        string everything = Encoding.UTF8.GetString(result.Body.ToArray()) + "|" + string.Join("|", lines);
+        Assert.NotEmpty(lines);
+        Assert.DoesNotContain("rulesproxykey", everything, StringComparison.Ordinal);
+        Assert.DoesNotContain("127.0.0.1", everything, StringComparison.Ordinal);
+        Assert.DoesNotContain("ingest", everything, StringComparison.Ordinal);
+        Assert.DoesNotContain("collect", everything, StringComparison.Ordinal);
+        Assert.DoesNotContain(PublicKey, everything, StringComparison.Ordinal);
+        Assert.Equal("no-store", Values(result, "Cache-Control").Single());
     }
 
     private static Task<TestApi> Redirecting(int status, TestApi target) =>

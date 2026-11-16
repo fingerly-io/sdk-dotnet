@@ -114,19 +114,40 @@ internal static class Keys
     }
 
     /// <summary>
-    /// Validates the proxy's upstream.
+    /// Validates the proxy's upstream: a bare origin, nothing else.
     /// </summary>
     /// <remarks>
-    /// The proxy key travels to this origin on every request, so on top of
-    /// <see cref="Origin"/> it must be HTTPS. Plain HTTP is accepted only for
+    /// The proxy key travels to this origin on every request, so the rule is
+    /// stricter than <see cref="Origin"/>: printable ASCII only, HTTPS, no
+    /// credentials, path, query or fragment. Plain HTTP is accepted only for
     /// <c>127.0.0.1</c>, <c>localhost</c> or <c>[::1]</c>, and only when
-    /// <paramref name="allowInsecureLoopback"/> is set.
+    /// <paramref name="allowInsecureLoopback"/> is set. The returned origin is
+    /// rebuilt from the parsed scheme, host and port, never the input. The
+    /// error never repeats the value.
     /// </remarks>
-    /// <exception cref="ArgumentException">The value is not such an origin.</exception>
+    /// <exception cref="ArgumentException">The value is anything but such an origin.</exception>
     internal static string ProxyOrigin(string value, bool allowInsecureLoopback, string paramName)
     {
-        string origin = Origin(value, paramName);
-        var uri = new Uri(origin, UriKind.Absolute);
+        const string Shape =
+            "Upstream must be an origin such as https://host or https://host:port, with no "
+            + "credentials, path, query, fragment, space or control character";
+        if (value is null || !PrintableAscii.IsMatch(value)
+            || value.IndexOf('?') >= 0 || value.IndexOf('#') >= 0
+            || !Uri.TryCreate(value, UriKind.Absolute, out Uri? uri)
+            || (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps)
+            || string.IsNullOrEmpty(uri.Host)
+            || !string.IsNullOrEmpty(uri.UserInfo) || value.IndexOf('@') >= 0)
+        {
+            throw new ArgumentException(Shape, paramName);
+        }
+        // The raw path, since Uri resolves dot segments and escapes.
+        int authority = value.IndexOf("//", StringComparison.Ordinal) + 2;
+        int slash = value.IndexOf('/', authority);
+        string rawPath = slash < 0 ? string.Empty : value.Substring(slash);
+        if (rawPath.Length > 1 || value.IndexOf('\\') >= 0 || uri.AbsolutePath != "/")
+        {
+            throw new ArgumentException(Shape, paramName);
+        }
         if (uri.Scheme == Uri.UriSchemeHttp)
         {
             bool loopback = uri.Host == "127.0.0.1" || uri.Host == "localhost" || uri.Host == "[::1]";
@@ -137,8 +158,11 @@ internal static class Keys
                     + "localhost or [::1] with AllowInsecureLoopback set", paramName);
             }
         }
-        return origin;
+        return uri.Scheme + "://" + uri.Host + (uri.IsDefaultPort ? string.Empty : ":" + uri.Port);
     }
+
+    private static readonly Regex PrintableAscii =
+        new(@"\A[\x21-\x7e]+\z", RegexOptions.CultureInvariant);
 
     /// <summary>Validates an API route version before it is spliced into a URL.</summary>
     /// <exception cref="ArgumentException">The version is not of that shape.</exception>
