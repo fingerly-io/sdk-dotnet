@@ -85,25 +85,46 @@ public static class AttestationStatuses
 /// </summary>
 public static class AttestSkippedReasons
 {
-    /// <summary>Attestation was not offered.</summary>
+    /// <summary>
+    /// The challenge offered no attestation: on iOS the SDK key has no Apple app ID for
+    /// App Attest, on Android the app's transport returned no challenge offer.
+    /// </summary>
     public const string NotOffered = "not_offered";
 
-    /// <summary>Attestation is not supported on the device.</summary>
+    /// <summary>
+    /// The device cannot make an attested key: App Attest is not supported on the iOS
+    /// device, or Android is older than 7.0 (API 24).
+    /// </summary>
     public const string Unsupported = "unsupported";
 
-    /// <summary>No attestation challenge was available.</summary>
+    /// <summary>
+    /// No usable challenge ticket: the challenge request failed, or on Android the ticket
+    /// it returned was malformed.
+    /// </summary>
     public const string ChallengeUnavailable = "challenge_unavailable";
 
-    /// <summary>The attestation key failed.</summary>
+    /// <summary>
+    /// The platform key store failed to create, attest or sign with the key, or on Android
+    /// the stored key record could not be read.
+    /// </summary>
     public const string KeyError = "key_error";
 
-    /// <summary>Attestation timed out.</summary>
+    /// <summary>
+    /// Attestation did not finish in time: a key store call ran past its budget, or another
+    /// identification held the attestation step too long.
+    /// </summary>
     public const string Timeout = "timeout";
 
-    /// <summary>The SDK was backing off from attestation.</summary>
+    /// <summary>
+    /// The server rejected a new key from this install (on iOS, also when it asked for a
+    /// replacement), and the SDK is waiting out a backoff before it registers another.
+    /// </summary>
     public const string Backoff = "backoff";
 
-    /// <summary>The install ID was unavailable.</summary>
+    /// <summary>
+    /// The report has no usable install ID, or on iOS the stored key record could not be
+    /// read or saved.
+    /// </summary>
     public const string InstallUnavailable = "install_unavailable";
 }
 
