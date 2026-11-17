@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.4.1
+
+- Each `AttestSkippedReasons` constant describes when the SDK reports that
+  reason on iOS and Android.
+- The vendored OpenAPI contract (`contract/openapi.json`) declares the fixed
+  string values the API sends as enums, synced from the server.
+
 ## 0.4.0
 
 - Named constants for every closed string set the API sends: `Signals` (every
