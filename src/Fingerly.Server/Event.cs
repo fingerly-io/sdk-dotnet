@@ -30,6 +30,12 @@ public sealed class EventTrigger
     /// <summary>Browser report without <c>Sec-Fetch-*</c> headers from a browser that always sends them.</summary>
     public const string SignalFetchMetadataMissing = "fetch_metadata_missing";
 
+    /// <summary>Browser report that carried no single-use freshness ticket.</summary>
+    public const string SignalWebTicketMissing = "web_ticket_missing";
+
+    /// <summary>Browser report whose freshness ticket did not verify: bad signature, another key's or origin's, expired, or already used.</summary>
+    public const string SignalWebTicketInvalid = "web_ticket_invalid";
+
     /// <summary>Runtime code or natives were patched or tampered with.</summary>
     public const string SignalTampering = "tampering";
 
@@ -51,6 +57,8 @@ public sealed class EventTrigger
         SignalReportIncomplete,
         SignalProbeErrors,
         SignalFetchMetadataMissing,
+        SignalWebTicketMissing,
+        SignalWebTicketInvalid,
         SignalTampering,
         SignalCustomRootCa,
         SignalSecondaryUserProfile,

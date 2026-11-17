@@ -207,6 +207,8 @@ constants on `EventTrigger`: `SignalAttestationFailed` (`"attestation_failed"`),
 `SignalReportIncomplete` (`"report_incomplete"`),
 `SignalProbeErrors` (`"probe_errors"`),
 `SignalFetchMetadataMissing` (`"fetch_metadata_missing"`),
+`SignalWebTicketMissing` (`"web_ticket_missing"`),
+`SignalWebTicketInvalid` (`"web_ticket_invalid"`),
 `SignalTampering` (`"tampering"`),
 `SignalCustomRootCa` (`"custom_root_ca"`) and
 `SignalSecondaryUserProfile` (`"secondary_user_profile"`).
