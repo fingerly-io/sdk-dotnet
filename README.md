@@ -35,8 +35,8 @@ scores how suspicious it is.
 2. **Install.**
 
    ```sh
-   dotnet add package Fingerly.Server --version 0.4.0
-   dotnet add package Fingerly.Server.AspNetCore --version 0.4.0   # for the proxy and DI
+   dotnet add package Fingerly.Server --version 0.4.1
+   dotnet add package Fingerly.Server.AspNetCore --version 0.4.1   # for the proxy and DI
    ```
 
 3. **Read an event.**
@@ -493,7 +493,7 @@ const fingerly = await load({ apiKey: 'fly_pk_…', endpoints: '/k7x2qm4a' })
 | Origin | A request without either `Origin` or a validated native `X-Fingerly-SDK-Platform` header (listed below) is rejected locally with `400` (`missing_origin`), and `X-Fingerly-Origin` is never synthesized from `Host`, `Referer` or the request URL. Only one channel goes upstream: when `Origin` is present it is sent as `X-Fingerly-Origin` and the platform header is dropped, as the API's direct path treats such a request as a browser one. |
 | Body size | Bodies over 1 MiB get `413`, enforced while reading rather than after buffering. |
 | Forwarded upstream | All incoming `X-Fingerly-*`, `Cookie`, `Authorization` and trace-context headers are stripped, restoring only a validated `X-Fingerly-SDK-Platform` (for a request without `Origin`) alongside `X-Fingerly-Host`, `Idempotency-Key`, `Sec-Fetch-*` and `Sec-CH-UA-*`. |
-| Proxy identity | The proxy reports itself upstream as `dotnet/0.4.0`, which the dashboard shows per proxy. |
+| Proxy identity | The proxy reports itself upstream as `dotnet/0.4.1`, which the dashboard shows per proxy. |
 | Relayed back | Only `Content-Type`, `X-Request-Id`, `RateLimit-Limit`, `RateLimit-Remaining` and `Retry-After`, with `Cache-Control: no-store` added. |
 | Upstream timeout | `504` ("Gateway timeout") if the upstream did not answer within `Timeout` (5 seconds by default). |
 | Other upstream failures | `502` ("Bad gateway") for anything else: refused, reset, truncated, larger than 4 MiB, undecodable, a redirect (never followed), or a status outside 200 to 599. |
