@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.4.0
+
+- Named constants for every closed string set the API sends: `Signals` (every
+  signal group and detector), `SuspectLevels`, `Confidences`, `EventStates`,
+  `Environments`, `Platforms`, `AnonymityNetworks`, `DeviceKinds`,
+  `VisitorKinds`, `AttestationStates`, `AttestationStatuses`,
+  `AttestSkippedReasons`, `WebhookEventTypes` and `WebhookEnvironments`, plus
+  `VerifyReasons.Ok`. They are `const string`, so they work as `switch` labels
+  and need nothing from the JSON source generator, and the properties stay
+  `string`, so a value the server adds later still deserializes. The
+  `EventTrigger.Signal…` constants are the same strings.
+- `Event.AnonymityNetwork` documents `relay`, which the server already sends,
+  and `Event.VisitorKind` documents its real values.
+
 ## 0.3.0
 
 - Synced the v3 single-call ingest contract snapshot (`openapi.json` and
