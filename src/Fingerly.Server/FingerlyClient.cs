@@ -32,7 +32,7 @@ namespace Fingerly;
 public sealed class FingerlyClient : IDisposable
 {
     /// <summary>The SDK version, reported to the API on every request.</summary>
-    public const string Version = "0.2.0";
+    public const string Version = "0.3.0";
 
     private const string UserAgentValue = "fingerly-dotnet/" + Version;
 
@@ -104,7 +104,8 @@ public sealed class FingerlyClient : IDisposable
         // or management key can never reach an API that would accept it.
         Keys.Parse(options.SecretKey, Keys.Secret, nameof(FingerlyOptions.SecretKey));
         string origin = Keys.Origin(
-            options.Endpoint ?? Keys.DefaultEndpoint, nameof(FingerlyOptions.Endpoint));
+            options.Endpoint ?? Keys.DefaultEndpoint, options.AllowInsecureLoopback,
+            nameof(FingerlyOptions.Endpoint));
         string apiVersion = Keys.ApiVersion(
             options.ApiVersion, nameof(FingerlyOptions.ApiVersion));
 
@@ -114,10 +115,17 @@ public sealed class FingerlyClient : IDisposable
         _ownsHttpClient = owned;
         _httpClient = httpClient ?? CreateHttpClient(options.Handler);
         Events = new EventsService(this);
+        DeviceCheck = new DeviceCheckService(this);
     }
 
     /// <summary>Event reads under this client's secret key.</summary>
     public EventsService Events { get; }
+
+    /// <summary>
+    /// Reads and writes the Apple DeviceCheck bits of an iOS event's device,
+    /// by spending the token held for that event.
+    /// </summary>
+    public DeviceCheckService DeviceCheck { get; }
 
     /// <summary>Names the API; the secret key is never included.</summary>
     /// <returns>A description safe to log.</returns>
@@ -155,13 +163,35 @@ public sealed class FingerlyClient : IDisposable
     /// body included, and the body is read within
     /// <see cref="SharedHttp.ResponseLimit"/> whatever client sends it.
     /// </remarks>
-    internal async Task<byte[]> GetAsync(string path, CancellationToken cancellationToken)
+    internal Task<byte[]> GetAsync(string path, CancellationToken cancellationToken) =>
+        SendAsync(HttpMethod.Get, path, null, cancellationToken);
+
+    /// <summary>
+    /// Performs one authenticated request and returns the body.
+    /// </summary>
+    /// <remarks>
+    /// Never retries, like <see cref="GetAsync"/>. A fresh
+    /// <see cref="HttpRequestMessage"/> is built on every call, so a caller
+    /// that retries sends the identical request again.
+    /// </remarks>
+    /// <param name="method">The HTTP method.</param>
+    /// <param name="path">The path under the API base.</param>
+    /// <param name="json">A JSON body, or null to send none.</param>
+    /// <param name="cancellationToken">Cancels the call.</param>
+    internal async Task<byte[]> SendAsync(
+        HttpMethod method, string path, byte[]? json, CancellationToken cancellationToken)
     {
         var uri = new Uri(_baseUri, path);
-        using var request = new HttpRequestMessage(HttpMethod.Get, uri);
+        using var request = new HttpRequestMessage(method, uri);
         request.Headers.TryAddWithoutValidation("X-API-Key", _secretKey);
         request.Headers.TryAddWithoutValidation("Accept", "application/json");
         request.Headers.TryAddWithoutValidation("User-Agent", UserAgentValue);
+        if (json is not null)
+        {
+            var content = new ByteArrayContent(json);
+            content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/json");
+            request.Content = content;
+        }
 
         using CancellationTokenSource deadline =
             CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -272,12 +302,44 @@ public sealed class FingerlyClient : IDisposable
         {
             details = Json.Reparse(Redact(raw.GetRawText()));
         }
-        return new FingerlyApiException(
-            status,
-            RedactOrNull(envelope.Error?.Code),
-            details,
-            RedactOrNull(envelope.RequestId) ?? headerRequestId,
-            retryAfter);
+        string? code = RedactOrNull(envelope.Error?.Code ?? StringOf(envelope.Code));
+        string? requestId = RedactOrNull(envelope.RequestId) ?? headerRequestId;
+        if (status == 409 && code == FingerlyEventAlreadyConsumedException.ErrorCode)
+        {
+            string? consumedAt = StringOf(envelope.ConsumedAt)
+                ?? StringOf(envelope.Error?.ConsumedAt)
+                ?? DetailIssue(details, "consumed_at");
+            return new FingerlyEventAlreadyConsumedException(
+                status, code, details, requestId, retryAfter, RedactOrNull(consumedAt));
+        }
+        return new FingerlyApiException(status, code, details, requestId, retryAfter);
+    }
+
+    /// <summary>The value of a string tree, or null for any other kind.</summary>
+    private static string? StringOf(JsonElement? value) =>
+        value is JsonElement element && element.ValueKind == JsonValueKind.String ? element.GetString() : null;
+
+    /// <summary>
+    /// The <c>issue</c> of the <c>details</c> entry whose <c>field</c> is
+    /// <paramref name="field"/>, or null.
+    /// </summary>
+    private static string? DetailIssue(JsonElement? details, string field)
+    {
+        if (details is not JsonElement list || list.ValueKind != JsonValueKind.Array)
+        {
+            return null;
+        }
+        foreach (JsonElement entry in list.EnumerateArray())
+        {
+            if (entry.ValueKind == JsonValueKind.Object
+                && entry.TryGetProperty("field", out JsonElement name)
+                && name.ValueKind == JsonValueKind.String && name.GetString() == field
+                && entry.TryGetProperty("issue", out JsonElement issue))
+            {
+                return StringOf(issue);
+            }
+        }
+        return null;
     }
 
     /// <summary>

@@ -45,6 +45,7 @@ public class ServiceCollectionTest
         {
             options.SecretKey = SecretKey;
             options.Endpoint = api.Origin;
+            options.AllowInsecureLoopback = true;
         });
         await using ServiceProvider provider = services.BuildServiceProvider();
 
@@ -83,6 +84,7 @@ public class ServiceCollectionTest
         {
             options.SecretKey = SecretKey;
             options.Endpoint = api.Origin;
+            options.AllowInsecureLoopback = true;
         });
         await using ServiceProvider provider = services.BuildServiceProvider();
 
@@ -120,6 +122,7 @@ public class ServiceCollectionTest
         {
             options.SecretKey = SecretKey;
             options.Endpoint = api.Origin;
+            options.AllowInsecureLoopback = true;
         });
         await using ServiceProvider provider = services.BuildServiceProvider();
 
@@ -168,6 +171,7 @@ public class ServiceCollectionTest
                 options.ProxyKey = ProxyKey;
                 options.Path = "/k7x2qm4a";
                 options.Upstream = upstream.Origin;
+                options.AllowInsecureLoopback = true;
                 options.ClientIp = _ => "203.0.113.7";
             }),
             app =>
@@ -181,6 +185,7 @@ public class ServiceCollectionTest
             Content = new StringContent("{}", Encoding.UTF8, "application/json"),
         };
         request.Headers.TryAddWithoutValidation("X-API-Key", PublicKey);
+        request.Headers.TryAddWithoutValidation("Origin", "https://shop.example");
         HttpResponseMessage answer = await site.Client.SendAsync(request);
 
         Assert.Equal(HttpStatusCode.OK, answer.StatusCode);
@@ -197,6 +202,7 @@ public class ServiceCollectionTest
                 options.ProxyKey = ProxyKey;
                 options.Path = "/k7x2qm4a";
                 options.Upstream = upstream.Origin;
+                options.AllowInsecureLoopback = true;
                 options.ClientIp = _ => "203.0.113.7";
             }),
             app => app.MapFingerlyProxy());
@@ -206,6 +212,7 @@ public class ServiceCollectionTest
             Content = new StringContent("{}", Encoding.UTF8, "application/json"),
         };
         request.Headers.TryAddWithoutValidation("X-API-Key", PublicKey);
+        request.Headers.TryAddWithoutValidation("Origin", "https://shop.example");
         HttpResponseMessage answer = await site.Client.SendAsync(request);
 
         Assert.Equal(HttpStatusCode.OK, answer.StatusCode);
@@ -233,6 +240,7 @@ public class ServiceCollectionTest
             options.ProxyKey = ProxyKey;
             options.Path = "/k7x2qm4a";
             options.Upstream = "http://127.0.0.1:9";
+            options.AllowInsecureLoopback = true;
             options.ClientIp = _ => "203.0.113.7";
         });
         await using ServiceProvider provider = services.BuildServiceProvider();
@@ -240,6 +248,7 @@ public class ServiceCollectionTest
 
         var request = new ProxyRequest("POST", "/k7x2qm4a") { Body = new System.IO.MemoryStream(Encoding.UTF8.GetBytes("{}")) };
         request.AddHeader("X-API-Key", PublicKey);
+        request.AddHeader("Origin", "https://shop.example");
         ProxyResponse answer = await proxy.HandleAsync(request);
 
         Assert.Equal(502, answer.Status);

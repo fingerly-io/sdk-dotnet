@@ -35,8 +35,8 @@ scores how suspicious it is.
 2. **Install.**
 
    ```sh
-   dotnet add package Fingerly.Server
-   dotnet add package Fingerly.Server.AspNetCore   # for the proxy and DI
+   dotnet add package Fingerly.Server --version 0.3.0
+   dotnet add package Fingerly.Server.AspNetCore --version 0.3.0   # for the proxy and DI
    ```
 
 3. **Read an event.**
@@ -54,7 +54,8 @@ scores how suspicious it is.
    app.MapGet("/orders/{requestId}/check", async (string requestId, FingerlyClient fingerly, CancellationToken ct) =>
    {
        Event ev = await fingerly.Events.GetAsync(requestId, ct);
-       return ev.IsScored ? Results.Ok(ev.SuspectLevel) : Results.Ok("unscored");
+       if (string.IsNullOrEmpty(ev.VisitorId) || !ev.IsScored) return Results.Ok("review");
+       return Results.Ok(ev.SuspectLevel);
    });
 
    app.Run();
@@ -91,10 +92,12 @@ Full guide: [docs.fingerly.io/docs/sdks/dotnet](https://docs.fingerly.io/docs/sd
 | I want to | Use | Read |
 | --- | --- | --- |
 | Read an event after the browser identified a visitor | `FingerlyClient` and `Events.GetAsync` / `ListAsync` | [Read events](#read-events) |
+| Verify and consume an event before a backend action | `Events.VerifyAsync` / `ConsumeAsync` | [Verify a backend action](#verify-a-backend-action) |
+| Read or write the DeviceCheck bits of an iOS device | `DeviceCheck.QueryAsync` / `WriteAsync` | [DeviceCheck bits](#devicecheck-bits) |
 | Check a webhook delivery is genuine | `Webhooks.Verify` and `Webhooks.Parse` | [Verify webhooks](#verify-webhooks) |
 | Keep the browser SDK first-party, away from content blockers | `AddFingerlyProxy` with `MapFingerlyProxy` or `UseFingerlyProxy` | [First-party proxy](#first-party-proxy-same-origin) |
 
-On this page: [Packages](#packages) · [Read events](#read-events) · [Verify webhooks](#verify-webhooks) · [First-party proxy](#first-party-proxy-same-origin) · [Deadlines, limits and connections](#deadlines-limits-and-connections) · [Requirements](#requirements) · [Development](#development-and-release-preparation) · [Documentation](#documentation) · [Help](#help) · [Licence](#licence)
+On this page: [Packages](#packages) · [Read events](#read-events) · [DeviceCheck bits](#devicecheck-bits) · [Verify webhooks](#verify-webhooks) · [First-party proxy](#first-party-proxy-same-origin) · [Deadlines, limits and connections](#deadlines-limits-and-connections) · [Requirements](#requirements) · [Development](#development-and-release-preparation) · [Documentation](#documentation) · [Help](#help) · [Licence](#licence)
 
 ## Packages
 
@@ -125,11 +128,15 @@ about at the call site. Never call `.Result` or `.Wait()` on these methods.
 
 Event reads require `fly_sk_{production|staging|development}_…` keys. Requests
 go to `https://api.fingerly.io`; `Endpoint` overrides that for a local
-API. Public, proxy, management, malformed and unsupported keys are rejected
-before network access, by the constructor rather than by the first call.
-Requests do not follow redirects. `GetAsync` and `ListAsync` each perform one
-request and never retry. An empty, `.` or `..` request id is an
-`ArgumentException`.
+API and takes a bare origin only: `https://host` or `https://host:port`, with
+no credentials, path, query, fragment, space or control character. Plain HTTP
+is refused, except for `http://127.0.0.1`, `http://localhost` or
+`http://[::1]` (any port) when `AllowInsecureLoopback` is set, which is for a
+local test harness. The error never repeats the value. Public, proxy,
+management, malformed and unsupported keys are rejected before network access,
+by the constructor rather than by the first call. Requests do not follow
+redirects. `GetAsync` and `ListAsync` each perform one request and never
+retry. An empty, `.` or `..` request id is an `ArgumentException`.
 
 ```csharp
 EventPage page = await fingerly.Events.ListAsync(
@@ -182,19 +189,84 @@ job. `IsEventNotFound` means a request id that was never issued, or one past
 retention, and is never pending.
 
 The archived document arrives moments after the event itself, so check
-`HasDocument` rather than assuming it is there.
+`HasDocument` rather than assuming it is there, and inspect `Document`
+(`JsonElement?`, containing allow-listed `risk`, `attestation`, `ip_network` and
+`velocity` fields with no raw signals, user agent or address). When a submission
+is unidentifiable (`identifiable == false`, such as insufficient entropy, a
+genuine embedded WebView, or an unmatched high-risk Web payload), `VisitorId` is
+`""`; there are no `deferred_token`, `deferred_signals` or `supplements` fields
+in `v: 3`.
+
+`EventTrigger.V3Signals` groups the `v: 3` anti-spoofing and integrity signal
+constants on `EventTrigger`: `SignalAttestationFailed` (`"attestation_failed"`),
+`SignalAttestationDowngrade` (`"attestation_downgrade"`),
+`SignalDeviceInconsistent` (`"device_inconsistent"`),
+`SignalReportIncomplete` (`"report_incomplete"`),
+`SignalProbeErrors` (`"probe_errors"`),
+`SignalFetchMetadataMissing` (`"fetch_metadata_missing"`),
+`SignalWebTicketMissing` (`"web_ticket_missing"`),
+`SignalWebTicketInvalid` (`"web_ticket_invalid"`),
+`SignalTampering` (`"tampering"`),
+`SignalCustomRootCa` (`"custom_root_ca"`) and
+`SignalSecondaryUserProfile` (`"secondary_user_profile"`).
 
 ### Verify a backend action
 
-Read the event with a server-only key. Check that its tag matches your action,
-that it is recent, that its environment is correct, and that it was scored.
-Apply your own policy to the server's verdict. A pending event
-(`IsPending`) is not a verdict: retry after `RetryAfter` seconds or verify
-asynchronously, rather than refusing the action. Do not authorize an action using
-scores or visitor identifiers supplied by the browser. Tags correlate events;
-they do not replace your application's authentication or replay protection.
-Never put a personal identifier (user ID, email, install ID or advertising ID)
-in a tag: the server keeps tags in long-lived rollups.
+Send the browser's `request_id` to your backend and verify it there with a
+server-only key, which reads only the events of its own environment.
+`VerifyAsync` reads the event and runs these checks in order, stopping at the
+first that fails:
+
+| Check | `Reason` (`VerifyReasons`) |
+|---|---|
+| The event exists | `not_found` (`NotFound`); `Event` is null |
+| It is no older than `MaxAgeSeconds` (300 by default); a missing or unreadable `occurred_at` fails | `too_old` (`TooOld`) |
+| Its tag equals `Tag`, when you set one | `tag_mismatch` (`TagMismatch`) |
+| It has a visitor id (`VisitorId` is `""` when unidentifiable) | `unidentifiable` (`Unidentifiable`) |
+| It carries a suspect score | `unscored` (`Unscored`) |
+| It was not consumed before | `already_consumed` (`AlreadyConsumed`) |
+
+When every check passes, `Ok` is true and `Reason` is `""`. Consumption comes
+last and happens only when every other check passed, so one event backs one
+decision; pass `Consume = false` to check without consuming. Score policy
+stays with you: `VerifyAsync` never looks at the score, level or triggers.
+
+```csharp
+VerifyResult result;
+try
+{
+    result = await fingerly.Events.VerifyAsync(
+        requestId, new VerifyOptions { Tag = "checkout" }, ct);
+}
+catch (FingerlyApiException e) when (e.IsPending)
+{
+    // Not recorded yet, so nothing is decided: verify again after
+    // e.RetryAfter seconds, or asynchronously.
+    return "retry";
+}
+
+if (!result.Ok) return "refuse"; // result.Reason says why
+if (result.Event!.SuspectLevel == "high") return "review";
+return "allow";
+```
+
+A pending event (`IsPending`) is not a verdict, so `VerifyAsync` throws it
+rather than reporting a reason: retry after `RetryAfter` seconds or verify
+asynchronously, rather than refusing the action. Every error other than
+`event_not_found` and `event_already_consumed` is thrown unchanged. A
+non-positive `MaxAgeSeconds` or an empty `Tag` throws `ArgumentException`
+before any request.
+
+`ConsumeAsync(requestId)` consumes an event directly and returns a
+`ConsumeResult` (`RequestId`, `ConsumedAt`, `First`). Any later call throws
+`FingerlyEventAlreadyConsumedException`, a `FingerlyApiException` with status
+`409`, code `event_already_consumed` (`IsEventAlreadyConsumed`) and the
+original time in `ConsumedAt`.
+
+Do not authorize an action using scores or visitor identifiers supplied by the
+browser. Tags correlate events; they do not replace your application's
+authentication. Never put a personal identifier (user ID, email, install ID or
+advertising ID) in a tag: the server keeps tags in long-lived rollups.
 
 ### Errors
 
@@ -232,9 +304,68 @@ A read answers `404` with one of two codes, each with its own check:
 | `IsPending` | `event_pending` | The request id was accepted and the event is still being recorded. Nothing is decided yet: read again after `RetryAfter` seconds (the API sends `Retry-After: 2`), or verify asynchronously. Do not treat it as fraud. |
 | `IsEventNotFound` | `event_not_found` | The request id was never issued, or the event is past retention. |
 
-The client never retries by itself. No SDK object prints a credential:
+The client never retries by itself, except the
+[DeviceCheck calls](#devicecheck-bits). No SDK object prints a credential:
 `ToString()` shows `[redacted]` in place of every key, and serializing the
 options leaves the keys out.
+
+## DeviceCheck bits
+
+For an iOS identification whose App Attest evidence covered a DeviceCheck
+token, Fingerly holds the token for one hour, and your backend spends it once
+to read or to write the two bits Apple keeps for the device. The bits survive
+a reinstall and mean what you decide; Fingerly never reads them.
+
+```csharp
+DeviceCheckBits bits = await fingerly.DeviceCheck.QueryAsync(requestId, ct);
+// bits.Found, bits.Bit0, bits.Bit1, bits.LastUpdate ("YYYY-MM" or null)
+
+DeviceCheckWriteResult set = await fingerly.DeviceCheck.WriteAsync(
+    requestId, new DeviceCheckWrite { Bit0 = true }, ct);
+```
+
+Apple treats a DeviceCheck token as single-use, so a read and a write each
+need their own identification. A once-per-device free trial takes two:
+
+1. On the identification that asks for the trial, call `QueryAsync`. If the
+   bit says the device already had one, refuse it.
+2. Otherwise grant the trial and record the grant in your own data, so it
+   holds even before the device is marked.
+3. On the next identification from that install (the app can identify again
+   right after the grant), call `WriteAsync` with `Bit0 = true`.
+
+```csharp
+try
+{
+    DeviceCheckBits bits = await fingerly.DeviceCheck.QueryAsync(requestId, ct);
+    if (bits.Found && bits.Bit0) return "offer-paid-plan";
+}
+catch (FingerlyApiException e) when (e.Code == DeviceCheckErrors.NotHeld)
+{
+    // No token for this event: decide without the bits.
+}
+```
+
+A write needs `Bit0`, `Bit1` or both; one with neither throws
+`ArgumentException` and sends nothing. Failures are `FingerlyApiException`;
+compare `Code` with the `DeviceCheckErrors` constants:
+
+| Status | `DeviceCheckErrors` | Code |
+|---|---|---|
+| 404 | `NotHeld` | `device_check_not_held` |
+| 409 | `Spent` | `device_check_spent` |
+| 409 | `Busy` | `device_check_busy` |
+| 409 | `CredentialUnavailable` | `credential_unavailable` |
+| 422 | `BitsRequired` | `bits_required` |
+| 422 | `AppleRejected` | `apple_rejected`, with Apple's status in `AppleStatus` |
+| 503 | `Unavailable` | `device_check_unavailable` |
+
+These two calls are the only ones the client retries: after a `503` or a
+transport failure or timeout it sends the identical request again, up to two
+more times. Apple lets a token be retried only for the same request, and the
+API answers `409 device_check_spent` to a retry with the other operation or
+other bits. No other answer is retried. Never retry with a different request
+yourself; after a `device_check_spent`, use another identification.
 
 ## Verify webhooks
 
@@ -318,25 +449,34 @@ const fingerly = await load({ apiKey: 'fly_pk_…', endpoints: '/k7x2qm4a' })
 
 | Rule | Behaviour |
 | --- | --- |
-| Upstream | The browser SDK posts both of its calls to the one path, and the proxy forwards each to Fingerly's one ingest URL, `https://api.fingerly.io/api/v1/ingest` (`ApiVersion` changes the version there and nowhere else). |
-| Path match | Only `POST` to the path itself, exactly: case-sensitive, and compared with the raw request target as the visitor sent it, so a trailing or doubled slash, a dot segment or percent encoding is a different path. The middleware passes such a request on to your application; the mapped endpoint answers it 404. Anything under the path gets the same. |
-| Other methods | `405` |
+| Upstream | Client SDKs post a single identification envelope to the one path, and the proxy forwards its raw bytes verbatim to Fingerly's one ingest URL, `https://api.fingerly.io/api/v1/ingest` (`ApiVersion` changes the version there and nowhere else). |
+| Upstream origin | `Upstream` overrides the API origin and takes a bare origin only: `https://host` or `https://host:port`, with no credentials, path, query, fragment, space or control character. Plain HTTP is refused, except for `http://127.0.0.1`, `http://localhost` or `http://[::1]` (any port) when `AllowInsecureLoopback` is set, which is for a local test harness. |
+| Path match | Only `POST` (plus `OPTIONS` when `AllowedOrigins` is configured; the method is case-sensitive, so `post` is refused) to the path itself, exactly: case-sensitive, and compared with the raw request target as the visitor sent it (the text after the authority for an absolute-form target, not normalised), so a trailing or doubled slash, a dot segment or percent encoding is a different path. The middleware passes such a request on to your application; the mapped endpoint answers it 404. Anything under the path gets the same. A path routing does not match at all never reaches the mapped endpoint and is your application's to answer. |
+| Other methods | `405` with `Allow`. Both adapters write that `404` and `405` themselves, with `Cache-Control: no-store`: the mapped endpoint takes every method so that routing never answers a wrong one. |
 | Event reads | Need a secret key and stay unreachable from a browser by construction. |
-| Public key | The browser must present a public key from the same environment as the proxy key, or the request gets `401`. |
+| Proxy key | `ProxyKey` is required and must be a `fly_px_{production\|staging\|development}_…` key: a missing or malformed one throws `ArgumentException` when the proxy is built. |
+| Public key | On every request the caller's `X-API-Key` must be a public key, `fly_pk_…`, from the same environment as the proxy key. Anything else (no header, another environment, a secret `fly_sk_` key) gets `401` as `text/plain; charset=utf-8` with `Cache-Control: no-store`, and nothing is forwarded. Upstream receives `X-Fingerly-Proxy-Key` plus that public key as `X-API-Key`; a secret key is never sent. |
+| Origin | A request without either `Origin` or a validated native `X-Fingerly-SDK-Platform` header (listed below) is rejected locally with `400` (`missing_origin`), and `X-Fingerly-Origin` is never synthesized from `Host`, `Referer` or the request URL. Only one channel goes upstream: when `Origin` is present it is sent as `X-Fingerly-Origin` and the platform header is dropped, as the API's direct path treats such a request as a browser one. |
 | Body size | Bodies over 1 MiB get `413`, enforced while reading rather than after buffering. |
-| Forwarded upstream | Only the content type, the visitor metadata Fingerly needs, and an `Idempotency-Key`. Customer cookies, authorization headers and trace context never are. |
-| Proxy identity | The proxy reports itself upstream as `dotnet/0.2.0`, which the dashboard shows per proxy. |
+| Forwarded upstream | All incoming `X-Fingerly-*`, `Cookie`, `Authorization` and trace-context headers are stripped, restoring only a validated `X-Fingerly-SDK-Platform` (for a request without `Origin`) alongside `X-Fingerly-Host`, `Idempotency-Key`, `Sec-Fetch-*` and `Sec-CH-UA-*`. |
+| Proxy identity | The proxy reports itself upstream as `dotnet/0.3.0`, which the dashboard shows per proxy. |
 | Relayed back | Only `Content-Type`, `X-Request-Id`, `RateLimit-Limit`, `RateLimit-Remaining` and `Retry-After`, with `Cache-Control: no-store` added. |
 | Upstream timeout | `504` ("Gateway timeout") if the upstream did not answer within `Timeout` (5 seconds by default). |
-| Other upstream failures | `502` ("Bad gateway") for anything else: refused, reset, truncated, larger than 4 MiB, or undecodable. |
+| Other upstream failures | `502` ("Bad gateway") for anything else: refused, reset, truncated, larger than 4 MiB, undecodable, a redirect (never followed), or a status outside 200 to 599. |
 | Visitor disconnects | The upstream call is cancelled, and the request ends quietly. |
+
+The native platform values accepted in `X-Fingerly-SDK-Platform` are `ios`,
+`android`, `react-native`, `react-native-ios`, `react-native-android`,
+`flutter`, `flutter-ios`, `flutter-android`, `lynx-ios`, `lynx-android`,
+`capacitor` and `kotlin-multiplatform`.
 
 The response headers are an allowlist because a blocker can match a response
 header by name: nothing on the response names Fingerly, whatever the API adds
 later. The answer is read whole before anything is relayed, so a truncated one
 is never passed on as a success.
 
-One line is logged per failure, without a stack trace or a key:
+One line is logged per failure, naming the kind of failure only, without a
+stack trace, a key or the upstream's address:
 `AddFingerlyProxy` sends it to the application's `ILogger` (category
 `Fingerly.FingerlyProxy`) at warning level, and `FingerlyProxyOptions.Log`
 takes any other sink.
@@ -403,6 +543,10 @@ the `IHttpClientFactory` handler the same way. If you pass your own
 `Handler`, give it `AllowAutoRedirect = false`, `UseCookies = false`, automatic
 decompression and
 `ActivityHeadersPropagator = DistributedContextPropagator.CreateNoOutputPropagator()`.
+The proxy refuses, at construction, a `SocketsHttpHandler` or
+`HttpClientHandler` (directly or under a `DelegatingHandler`) left at
+`AllowAutoRedirect = true`, and answers 502 to any redirect or to an answer
+for another URL whatever the handler.
 
 ## Requirements
 
@@ -442,7 +586,9 @@ check step. Never put production secrets in fixtures.
 
 `FingerlyClient` holds the options; `EventsService` owns the reads and the list
 filters, and `Event`, `EventPage` and `EventListOptions` are what they speak
-in. `Webhooks` verifies signatures. `FingerlyProxy` holds every proxy decision,
+in; it also verifies and consumes events, with `VerifyOptions`,
+`VerifyResult`, `VerifyReasons` and `ConsumeResult`. `DeviceCheckService` spends held DeviceCheck tokens, with
+`DeviceCheckBits`, `DeviceCheckWrite` and `DeviceCheckWriteResult`. `Webhooks` verifies signatures. `FingerlyProxy` holds every proxy decision,
 with `ProxyRequest` and `ProxyResponse` as the neutral shapes the hosts
 translate to. `SharedHttp` is the process-wide connection pool and reads every
 answer within its limit. `Keys` validates every caller-supplied option before

@@ -108,8 +108,11 @@ public static class FingerlyProxyEndpointRouteBuilderExtensions
     /// </summary>
     /// <remarks>
     /// The pattern is the proxy's own path, so the mount and the proxy cannot
-    /// disagree about where it lives. Routing answers a wrong method with 405
-    /// and any other path with 404, exactly as the proxy would.
+    /// disagree about where it lives. The endpoint takes every method, so the
+    /// proxy itself answers a wrong method with 405 and a near miss routing
+    /// let through (case, trailing slash, dot segment, escape) with 404, both
+    /// with <c>Cache-Control: no-store</c>. A path routing does not match at
+    /// all is the application's.
     /// </remarks>
     /// <param name="endpoints">The route builder.</param>
     /// <param name="proxy">The configured proxy.</param>
@@ -228,8 +231,11 @@ public static class FingerlyProxyEndpointRouteBuilderExtensions
                 ? ProxyExchange.ExecuteAsync(context, proxy, requested)
                 : ProxyExchange.NotFoundAsync(context);
         };
-        // The browser SDK carries no user: a fallback "authenticated" policy
-        // would answer every signed-out visitor with a sign-in redirect.
-        return endpoints.MapPost(path, handle).AllowAnonymous();
+        // Mapped for every method, so a wrong one gets the proxy's own 405
+        // (with Allow and Cache-Control: no-store) rather than routing's, and
+        // the method is compared exactly. The browser SDK carries no user: a
+        // fallback "authenticated" policy would answer every signed-out
+        // visitor with a sign-in redirect.
+        return endpoints.Map(path, handle).AllowAnonymous();
     }
 }

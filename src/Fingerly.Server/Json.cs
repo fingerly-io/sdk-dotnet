@@ -28,6 +28,10 @@ namespace Fingerly;
 [JsonSerializable(typeof(EventPage))]
 [JsonSerializable(typeof(WebhookEvent))]
 [JsonSerializable(typeof(ApiErrorEnvelope))]
+[JsonSerializable(typeof(DeviceCheckBits))]
+[JsonSerializable(typeof(DeviceCheckWrite))]
+[JsonSerializable(typeof(DeviceCheckWriteResult))]
+[JsonSerializable(typeof(ConsumeResult))]
 internal sealed partial class FingerlyJsonContext : JsonSerializerContext
 {
 }
@@ -40,6 +44,15 @@ internal sealed class ApiErrorEnvelope
 
     [JsonPropertyName("request_id")]
     public string? RequestId { get; init; }
+
+    // A bare body such as {"code":"event_already_consumed","consumed_at":"..."}
+    // carries these at the top level. Kept as trees so a value of another
+    // type drops only itself, never the whole error.
+    [JsonPropertyName("code")]
+    public JsonElement? Code { get; init; }
+
+    [JsonPropertyName("consumed_at")]
+    public JsonElement? ConsumedAt { get; init; }
 }
 
 /// <summary>The inner object of an error body.</summary>
@@ -50,6 +63,9 @@ internal sealed class ApiError
 
     [JsonPropertyName("details")]
     public JsonElement? Details { get; init; }
+
+    [JsonPropertyName("consumed_at")]
+    public JsonElement? ConsumedAt { get; init; }
 }
 
 internal static class Json

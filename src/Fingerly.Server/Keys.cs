@@ -84,34 +84,56 @@ internal static class Keys
     }
 
     /// <summary>
-    /// Normalises a caller-supplied API origin.
+    /// Validates a caller-supplied API origin: the client's endpoint or the
+    /// proxy's upstream. A bare origin, nothing else.
     /// </summary>
     /// <remarks>
-    /// Credentials, queries and fragments are refused: they would be attached
-    /// to every authenticated request, and embedded credentials would leak on
-    /// a redirect.
+    /// A key travels to this origin on every request, so the value must be
+    /// printable ASCII, HTTPS, and carry no credentials, path, query or
+    /// fragment. Plain HTTP is accepted only for <c>127.0.0.1</c>,
+    /// <c>localhost</c> or <c>[::1]</c>, and only when
+    /// <paramref name="allowInsecureLoopback"/> is set. The returned origin is
+    /// rebuilt from the parsed scheme, host and port, never the input. The
+    /// error never repeats the value.
     /// </remarks>
-    /// <returns>The origin without trailing slashes.</returns>
-    /// <exception cref="ArgumentException">
-    /// The URL is malformed or carries any of the above.
-    /// </exception>
-    internal static string Origin(string value, string paramName)
+    /// <exception cref="ArgumentException">The value is anything but such an origin.</exception>
+    internal static string Origin(string value, bool allowInsecureLoopback, string paramName)
     {
-        bool usable =
-            Uri.TryCreate(value, UriKind.Absolute, out Uri? uri)
-            && (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps)
-            && !string.IsNullOrEmpty(uri.Host)
-            && string.IsNullOrEmpty(uri.UserInfo)
-            && string.IsNullOrEmpty(uri.Query)
-            && string.IsNullOrEmpty(uri.Fragment);
-        if (!usable)
+        string shape = paramName
+            + " must be an origin such as https://host or https://host:port, with no "
+            + "credentials, path, query, fragment, space or control character";
+        if (value is null || !PrintableAscii.IsMatch(value)
+            || value.IndexOf('?') >= 0 || value.IndexOf('#') >= 0
+            || !Uri.TryCreate(value, UriKind.Absolute, out Uri? uri)
+            || (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps)
+            || string.IsNullOrEmpty(uri.Host)
+            || !string.IsNullOrEmpty(uri.UserInfo) || value.IndexOf('@') >= 0)
         {
-            throw new ArgumentException(
-                "endpoint must be an HTTP(S) URL without credentials, query, or fragment",
-                paramName);
+            throw new ArgumentException(shape, paramName);
         }
-        return value.TrimEnd('/');
+        // The raw path, since Uri resolves dot segments and escapes.
+        int authority = value.IndexOf("//", StringComparison.Ordinal) + 2;
+        int slash = value.IndexOf('/', authority);
+        string rawPath = slash < 0 ? string.Empty : value.Substring(slash);
+        if (rawPath.Length > 1 || value.IndexOf('\\') >= 0 || uri.AbsolutePath != "/")
+        {
+            throw new ArgumentException(shape, paramName);
+        }
+        if (uri.Scheme == Uri.UriSchemeHttp)
+        {
+            bool loopback = uri.Host == "127.0.0.1" || uri.Host == "localhost" || uri.Host == "[::1]";
+            if (!loopback || !allowInsecureLoopback)
+            {
+                throw new ArgumentException(
+                    paramName + " must use HTTPS; plain HTTP is accepted only for 127.0.0.1, "
+                    + "localhost or [::1] with AllowInsecureLoopback set", paramName);
+            }
+        }
+        return uri.Scheme + "://" + uri.Host + (uri.IsDefaultPort ? string.Empty : ":" + uri.Port);
     }
+
+    private static readonly Regex PrintableAscii =
+        new(@"\A[\x21-\x7e]+\z", RegexOptions.CultureInvariant);
 
     /// <summary>Validates an API route version before it is spliced into a URL.</summary>
     /// <exception cref="ArgumentException">The version is not of that shape.</exception>

@@ -20,6 +20,7 @@ internal static class RawPost
         using NetworkStream stream = tcp.GetStream();
         string request = "POST " + target + " HTTP/1.1\r\n"
             + "Host: " + origin.Authority + "\r\n"
+            + "Origin: https://shop.example\r\n"
             + "X-API-Key: " + publicKey + "\r\n"
             + "Content-Type: application/json\r\n"
             + "Content-Length: 2\r\n"

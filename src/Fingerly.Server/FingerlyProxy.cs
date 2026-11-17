@@ -9,7 +9,7 @@ using System.Threading.Tasks;
 namespace Fingerly;
 
 /// <summary>
-/// Same-origin proxy for the browser SDK.
+/// First-party ingest proxy for Fingerly client SDKs.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -27,11 +27,13 @@ namespace Fingerly;
 /// <see cref="ProxyResponse"/> back.
 /// </para>
 /// <para>
-/// The browser SDK posts both of its calls to one path, and every one is
-/// forwarded to Fingerly's one ingest URL, never anywhere else and never to
-/// event reads: reading events needs a secret key and must stay unreachable
-/// from a browser. Customer cookies and authorization headers are never passed
-/// on, and nothing relayed back names Fingerly.
+/// Client SDKs post a single identification envelope to one path, and every
+/// accepted request is forwarded verbatim as raw bytes to Fingerly's one
+/// ingest URL, never anywhere else and never to event reads: reading events
+/// needs a secret key and must stay unreachable from a browser. Customer
+/// cookies, authorization headers and caller-supplied <c>X-Fingerly-*</c>
+/// headers are stripped (restoring only a validated
+/// <c>X-Fingerly-SDK-Platform</c>), and nothing relayed back names Fingerly.
 /// </para>
 /// </remarks>
 public sealed class FingerlyProxy : IDisposable
@@ -40,6 +42,27 @@ public sealed class FingerlyProxy : IDisposable
 
     /// <summary>What this proxy reports itself as upstream; shown per proxy in the dashboard.</summary>
     private const string ProxyVersion = "dotnet/" + FingerlyClient.Version;
+
+    /// <summary>JSON refusal body returned when both Origin and a validated native platform header are absent.</summary>
+    internal const string MissingOriginJson =
+        "{\"error\":{\"code\":\"missing_origin\",\"message\":\"Missing origin\",\"status\":400}}";
+
+    /// <summary>Exact lowercase native and bridge platform identifiers allowed in <c>X-Fingerly-SDK-Platform</c>.</summary>
+    internal static readonly System.Text.RegularExpressions.Regex AllowedPlatforms = new(
+        @"\A(ios|android|react-native|react-native-ios|react-native-android|flutter|flutter-ios|flutter-android|lynx-ios|lynx-android|capacitor|kotlin-multiplatform)\z",
+        System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+
+    /// <summary>Allowlisted client headers forwarded verbatim when header-safe and non-blank.</summary>
+    private static readonly string[] ForwardedClientHeaders =
+    {
+        "Idempotency-Key",
+        "Sec-Fetch-Site",
+        "Sec-Fetch-Mode",
+        "Sec-Fetch-Dest",
+        "Sec-CH-UA",
+        "Sec-CH-UA-Mobile",
+        "Sec-CH-UA-Platform",
+    };
 
     /// <summary>Statuses that must not carry a body.</summary>
     private static readonly HashSet<int> Bodiless = new() { 204, 205, 304 };
@@ -62,11 +85,12 @@ public sealed class FingerlyProxy : IDisposable
             "retry-after",
         };
 
-    private readonly string _key;
+    private readonly string _proxyKey;
     private readonly Keys.Scope _scope;
-    private readonly bool _usesProxyKey;
     private readonly string _upstreamUrl;
+    private readonly Uri _upstreamUri;
     private readonly string? _path;
+    private readonly HashSet<string> _allowedOrigins;
     private readonly TimeSpan _timeout;
     private readonly Func<ProxyRequest, string?> _clientIp;
     private readonly HttpClient _httpClient;
@@ -75,9 +99,9 @@ public sealed class FingerlyProxy : IDisposable
     /// <summary>
     /// Builds the proxy, validating every option first.
     /// </summary>
-    /// <param name="options">The settings; the key and <see cref="FingerlyProxyOptions.ClientIp"/> are required.</param>
+    /// <param name="options">The settings; <see cref="FingerlyProxyOptions.ProxyKey"/> and <see cref="FingerlyProxyOptions.ClientIp"/> are required.</param>
     /// <exception cref="ArgumentNullException"><paramref name="options"/> is null.</exception>
-    /// <exception cref="ArgumentException">A credential, path or callback is invalid.</exception>
+    /// <exception cref="ArgumentException">The proxy key is missing or malformed, or a path or callback is invalid.</exception>
     /// <exception cref="ArgumentOutOfRangeException">A limit is not positive.</exception>
     public FingerlyProxy(FingerlyProxyOptions options)
         : this(options, null)
@@ -94,35 +118,27 @@ public sealed class FingerlyProxy : IDisposable
         {
             throw new ArgumentNullException(nameof(options));
         }
-#pragma warning disable CS0618 // The deprecated mode is still supported until the next major version.
-        string? secretKey = options.SecretKey;
-#pragma warning restore CS0618
-        if (string.IsNullOrEmpty(options.ProxyKey) && string.IsNullOrEmpty(secretKey))
+        if (string.IsNullOrEmpty(options.ProxyKey))
         {
             throw new ArgumentException(
                 "A Fingerly proxy key is required", nameof(options));
-        }
-        if (!string.IsNullOrEmpty(options.ProxyKey) && !string.IsNullOrEmpty(secretKey))
-        {
-            throw new ArgumentException(
-                "Set ProxyKey or the deprecated SecretKey, not both", nameof(options));
         }
         if (options.ClientIp is null)
         {
             throw new ArgumentException("ClientIp is required", nameof(options));
         }
 
-        _usesProxyKey = !string.IsNullOrEmpty(options.ProxyKey);
-        _key = (_usesProxyKey ? options.ProxyKey : secretKey)!;
-        _scope = Keys.Parse(
-            _key,
-            _usesProxyKey ? Keys.Proxy : Keys.Secret,
-            _usesProxyKey ? nameof(options.ProxyKey) : "SecretKey");
+        // Only fly_px_{environment}_…: a secret, public or malformed key is a
+        // configuration error, so no other credential can ever go upstream.
+        _proxyKey = options.ProxyKey!;
+        _scope = Keys.Parse(_proxyKey, Keys.Proxy, nameof(options.ProxyKey));
         _upstreamUrl = Keys.Origin(
-                options.Upstream ?? Keys.DefaultEndpoint, nameof(options.Upstream))
+                options.Upstream ?? Keys.DefaultEndpoint, options.AllowInsecureLoopback,
+                nameof(options.Upstream))
             + "/api/" + Keys.ApiVersion(options.ApiVersion, nameof(options.ApiVersion))
             + "/ingest";
         _path = options.Path is null ? null : NormalizePath(options.Path, nameof(options.Path));
+        _allowedOrigins = NormalizeAllowedOrigins(options.AllowedOrigins);
         if (options.MaxBodyBytes <= 0)
         {
             throw new ArgumentOutOfRangeException(
@@ -131,6 +147,12 @@ public sealed class FingerlyProxy : IDisposable
         MaxBodyBytes = options.MaxBodyBytes;
         _timeout = Keys.Positive(options.Timeout, nameof(options.Timeout));
         _clientIp = options.ClientIp;
+        if (FollowsRedirects(options.Handler))
+        {
+            throw new ArgumentException(
+                "Handler must not follow redirects: set AllowAutoRedirect = false", nameof(options));
+        }
+        _upstreamUri = new Uri(_upstreamUrl, UriKind.Absolute);
         _httpClient = CreateHttpClient(options.Handler);
         _log = options.Log ?? fallbackLog;
     }
@@ -151,11 +173,14 @@ public sealed class FingerlyProxy : IDisposable
     /// </remarks>
     public string? Path => _path;
 
+    /// <summary>Reports whether cross-origin CORS preflight handling is configured.</summary>
+    internal bool HasAllowedOrigins => _allowedOrigins.Count > 0;
+
     /// <summary>Names the path and upstream; no key is ever included.</summary>
     /// <returns>A description safe to log.</returns>
     public override string ToString() =>
         "FingerlyProxy { Path = " + (_path ?? "(routed)") + ", Upstream = " + _upstreamUrl
-        + ", " + (_usesProxyKey ? "ProxyKey" : "SecretKey") + " = [redacted] }";
+        + ", ProxyKey = [redacted] }";
 
     /// <summary>
     /// Reports whether a path is one this proxy serves.
@@ -197,7 +222,7 @@ public sealed class FingerlyProxy : IDisposable
     public ProxyResponse PayloadTooLarge() => ProxyResponse.Refusal(413, "Payload Too Large");
 
     /// <summary>
-    /// Handles one browser request.
+    /// Handles one client SDK request.
     /// </summary>
     /// <remarks>
     /// Never throws for a bad request: every refusal is a response, so an
@@ -208,7 +233,7 @@ public sealed class FingerlyProxy : IDisposable
     /// </remarks>
     /// <param name="request">The incoming request, as the adapter read it.</param>
     /// <param name="cancellationToken">Cancels the forward.</param>
-    /// <returns>The upstream response, or a 404, 405, 401, 413, 400, 500, 502 or 504 refusal.</returns>
+    /// <returns>The upstream response, or a 404, 405, 403, 401, 413, 400, 500, 502 or 504 refusal.</returns>
     /// <exception cref="ArgumentNullException"><paramref name="request"/> is null.</exception>
     public async Task<ProxyResponse> HandleAsync(
         ProxyRequest request, CancellationToken cancellationToken = default)
@@ -223,33 +248,66 @@ public sealed class FingerlyProxy : IDisposable
             return ProxyResponse.Refusal(404, "Not Found");
         }
 
-        if (!string.Equals(request.Method, "POST", StringComparison.OrdinalIgnoreCase))
+        // Step 1: Capture validated x-fingerly-sdk-platform before stripping x-fingerly-*.
+        string? rawPlatform = request.Header("X-Fingerly-SDK-Platform");
+        string? sdkPlatform = rawPlatform is not null && AllowedPlatforms.IsMatch(rawPlatform)
+            ? rawPlatform
+            : null;
+        string? origin = SafeNonBlank(request.Header("Origin"));
+        string? corsOrigin = origin is not null && _allowedOrigins.Contains(origin) ? origin : null;
+
+        if (_allowedOrigins.Count > 0
+            && string.Equals(request.Method, "OPTIONS", StringComparison.Ordinal))
         {
-            ProxyResponse refusal = ProxyResponse.Refusal(405, "Method Not Allowed");
-            var headers = new List<KeyValuePair<string, string>>(refusal.Headers)
+            if (origin is not null && corsOrigin is null)
             {
-                new("Allow", "POST"),
+                return ProxyResponse.Refusal(403, "Forbidden");
+            }
+            var preflightHeaders = new List<KeyValuePair<string, string>>
+            {
+                new("Allow", "POST, OPTIONS"),
             };
-            return new ProxyResponse(405, headers, refusal.Body.ToArray());
+            AppendCorsHeaders(preflightHeaders, corsOrigin);
+            return ProxyResponse.Bodiless(204, preflightHeaders);
         }
 
-        string? apiKey = UpstreamKeyFor(request.Header("X-API-Key"));
+        // Methods are case-sensitive (RFC 9110): "post" is not POST.
+        if (!string.Equals(request.Method, "POST", StringComparison.Ordinal))
+        {
+            var allow = new List<KeyValuePair<string, string>>
+            {
+                new("Allow", _allowedOrigins.Count == 0 ? "POST" : "POST, OPTIONS"),
+            };
+            AppendCorsHeaders(allow, corsOrigin);
+            return ProxyResponse.Refusal(405, "Method Not Allowed", allow);
+        }
+
+        IReadOnlyList<KeyValuePair<string, string>> cors = CorsHeaders(corsOrigin);
+
+        string? apiKey = PublicKeyFor(request.Header("X-API-Key"));
         if (apiKey is null)
         {
-            return ProxyResponse.Refusal(401, "Unauthorized");
+            return ProxyResponse.Refusal(401, "Unauthorized", cors);
         }
 
-        string? address = VisitorAddress(request);
-        if (address is null)
+        // Step 4: Enforce Origin / native-platform gate (never synthesize X-Fingerly-Origin).
+        if (origin is null && sdkPlatform is null)
         {
-            return ProxyResponse.Refusal(500, NoClientIp);
+            return ProxyResponse.JsonRefusal(400, MissingOriginJson, cors);
         }
 
         // Refuse on the declared size first; the read below enforces the real one.
         if (request.ContentLength > MaxBodyBytes)
         {
-            return PayloadTooLarge();
+            return ProxyResponse.Refusal(413, "Payload Too Large", cors);
         }
+
+        string? address = VisitorAddress(request);
+        if (address is null)
+        {
+            return ProxyResponse.Refusal(500, NoClientIp, cors);
+        }
+
         byte[]? body;
         try
         {
@@ -257,18 +315,18 @@ public sealed class FingerlyProxy : IDisposable
         }
         catch (IOException)
         {
-            return ProxyResponse.Refusal(400, "Bad Request");
+            return ProxyResponse.Refusal(400, "Bad Request", cors);
         }
         if (body is null)
         {
-            return PayloadTooLarge();
+            return ProxyResponse.Refusal(413, "Payload Too Large", cors);
         }
 
         using var upstream = new HttpRequestMessage(HttpMethod.Post, _upstreamUrl)
         {
             Content = new ByteArrayContent(body),
         };
-        ApplyUpstreamHeaders(upstream, request, apiKey, address);
+        ApplyUpstreamHeaders(upstream, request, apiKey, address, origin, sdkPlatform);
 
         using CancellationTokenSource deadline =
             CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -282,10 +340,20 @@ public sealed class FingerlyProxy : IDisposable
                 .SendAsync(upstream, HttpCompletionOption.ResponseHeadersRead, deadline.Token)
                 .ConfigureAwait(false);
             int status = (int)response.StatusCode;
+            // Only a direct, final answer of the pinned URL is relayed: a
+            // status outside 200 to 599, any redirect, or an answer for
+            // another URL (a handler that followed one anyway) is a 502.
+            if (status < 200 || status > 599 || (status >= 300 && status < 400)
+                || !Uri.Equals(upstream.RequestUri, _upstreamUri)
+                || (response.RequestMessage is not null
+                    && !Uri.Equals(response.RequestMessage.RequestUri, _upstreamUri)))
+            {
+                return Failed(timedOut: false, new UpstreamAnswerException(status), cors);
+            }
             byte[] answer = Bodiless.Contains(status)
                 ? Array.Empty<byte>()
                 : await SharedHttp.ReadBodyAsync(response, deadline.Token).ConfigureAwait(false);
-            return Relay(response, status, answer);
+            return Relay(response, status, answer, corsOrigin);
         }
 #pragma warning disable CA1031 // Every upstream failure is an answer, never an exception.
         catch (Exception failure)
@@ -299,7 +367,7 @@ public sealed class FingerlyProxy : IDisposable
             }
             // A cancelled read can surface as an IOException or a disposed
             // stream rather than a cancellation; the deadline says which.
-            return Failed(timedOut: deadline.IsCancellationRequested, failure);
+            return Failed(timedOut: deadline.IsCancellationRequested, failure, cors);
         }
     }
 
@@ -308,7 +376,8 @@ public sealed class FingerlyProxy : IDisposable
     /// the upstream did (refused, reset, unresolvable, truncated, oversized,
     /// undecodable), and logs one line for it.
     /// </summary>
-    private ProxyResponse Failed(bool timedOut, Exception failure)
+    private ProxyResponse Failed(
+        bool timedOut, Exception failure, IReadOnlyList<KeyValuePair<string, string>> cors)
     {
         string line = timedOut
             ? "Fingerly proxy: upstream did not answer within " + (long)_timeout.TotalMilliseconds + " ms"
@@ -323,15 +392,53 @@ public sealed class FingerlyProxy : IDisposable
         {
         }
         return timedOut
-            ? ProxyResponse.Refusal(504, "Gateway timeout")
-            : ProxyResponse.Refusal(502, "Bad gateway");
+            ? ProxyResponse.Refusal(504, "Gateway timeout", cors)
+            : ProxyResponse.Refusal(502, "Bad gateway", cors);
     }
 
     /// <summary>One short, key-free description: the failure's type and nothing it carries.</summary>
     private static string Describe(Exception failure) =>
-        failure is ResponseTooLargeException
-            ? "response larger than " + SharedHttp.ResponseLimit + " bytes"
-            : (failure.InnerException ?? failure).GetType().Name;
+        failure switch
+        {
+            ResponseTooLargeException => "response larger than " + SharedHttp.ResponseLimit + " bytes",
+            UpstreamAnswerException answer => answer.Message,
+            _ => (failure.InnerException ?? failure).GetType().Name,
+        };
+
+    /// <summary>An upstream answer the proxy will not relay: a redirect, an out-of-range status, or another URL's answer.</summary>
+    private sealed class UpstreamAnswerException : Exception
+    {
+        internal UpstreamAnswerException(int status)
+            : base("unrelayable answer, status " + status)
+        {
+        }
+    }
+
+    /// <summary>
+    /// Reports whether a supplied handler, or a handler under its
+    /// <see cref="DelegatingHandler"/> chain, is set to follow redirects.
+    /// </summary>
+    private static bool FollowsRedirects(HttpMessageHandler? handler)
+    {
+        for (int depth = 0; handler is not null && depth < 64; depth++)
+        {
+            switch (handler)
+            {
+#if NET
+                case SocketsHttpHandler sockets:
+                    return sockets.AllowAutoRedirect;
+#endif
+                case HttpClientHandler client:
+                    return client.AllowAutoRedirect;
+                case DelegatingHandler delegating:
+                    handler = delegating.InnerHandler;
+                    break;
+                default:
+                    return false;
+            }
+        }
+        return false;
+    }
 
     /// <summary>
     /// Releases this proxy's client. The connection pool is shared, or the
@@ -394,20 +501,17 @@ public sealed class FingerlyProxy : IDisposable
     }
 
     /// <summary>
-    /// Decides which key to present upstream.
+    /// Checks the caller's key locally, on every request.
     /// </summary>
     /// <remarks>
-    /// With a proxy key the browser must supply a public key for the same
-    /// environment, which the proxy forwards alongside its own. The
-    /// deprecated secret-key mode authenticates on its own.
+    /// The caller must present <c>fly_pk_{environment}_…</c> for the proxy
+    /// key's environment, which the proxy forwards alongside its own. A
+    /// missing header, a public key of another environment, a secret key or
+    /// anything else is refused before anything is forwarded.
     /// </remarks>
-    /// <returns>The key to forward, or null when the caller is unauthorised.</returns>
-    private string? UpstreamKeyFor(string? presented)
+    /// <returns>The public key to forward, or null when the caller is unauthorised.</returns>
+    private string? PublicKeyFor(string? presented)
     {
-        if (!_usesProxyKey)
-        {
-            return _key;
-        }
         if (!Keys.TryParse(presented, Keys.Public, out Keys.Scope browser))
         {
             return null;
@@ -419,53 +523,124 @@ public sealed class FingerlyProxy : IDisposable
     /// Sets the upstream headers.
     /// </summary>
     /// <remarks>
-    /// Nothing is copied wholesale: only the body's content type, the visitor
-    /// metadata Fingerly needs, the proxy's own version, and an idempotency key
-    /// when the SDK sent one.
-    /// The visitor writes the origin, user agent and content type, so each is
-    /// checked before it is repeated into a header of ours.
+    /// Nothing is copied wholesale: all incoming <c>X-Fingerly-*</c>,
+    /// <c>Cookie</c> and <c>Authorization</c> headers are stripped,
+    /// <c>X-Fingerly-Origin</c> is sent only when incoming <c>Origin</c> is
+    /// non-empty (never synthesized from <c>Host</c> or the request URL), and
+    /// a validated <c>X-Fingerly-SDK-Platform</c> is restored only when it is not.
     /// </remarks>
     private void ApplyUpstreamHeaders(
-        HttpRequestMessage upstream, ProxyRequest request, string apiKey, string address)
+        HttpRequestMessage upstream,
+        ProxyRequest request,
+        string apiKey,
+        string address,
+        string? origin,
+        string? sdkPlatform)
     {
-
-        string contentType = Safe(request.Header("Content-Type")) ?? "application/json";
+        string contentType = SafeNonBlank(request.Header("Content-Type")) ?? "application/json";
         // Content-Type belongs to the content, not the request: setting it on
         // HttpRequestMessage.Headers throws.
         upstream.Content!.Headers.TryAddWithoutValidation("Content-Type", contentType);
 
         upstream.Headers.TryAddWithoutValidation("X-API-Key", apiKey);
         upstream.Headers.TryAddWithoutValidation("X-Fingerly-Client-IP", address);
-        upstream.Headers.TryAddWithoutValidation(
-            "X-Fingerly-Origin", Safe(request.Header("Origin")) ?? string.Empty);
+        // One channel only: a browser Origin wins, as it does on the API's
+        // direct path, and the API refuses a proxied request carrying both.
+        if (origin is not null)
+        {
+            upstream.Headers.TryAddWithoutValidation("X-Fingerly-Origin", origin);
+        }
+        else if (sdkPlatform is not null)
+        {
+            upstream.Headers.TryAddWithoutValidation("X-Fingerly-SDK-Platform", sdkPlatform);
+        }
+        string? host = SafeNonBlank(request.Header("Host"));
+        if (host is not null)
+        {
+            upstream.Headers.TryAddWithoutValidation("X-Fingerly-Host", host);
+        }
         upstream.Headers.TryAddWithoutValidation(
             "X-Fingerly-User-Agent", Safe(request.Header("User-Agent")) ?? string.Empty);
         upstream.Headers.TryAddWithoutValidation("X-Fingerly-Proxy-Version", ProxyVersion);
         upstream.Headers.TryAddWithoutValidation("User-Agent", UserAgentValue);
-        if (_usesProxyKey)
+        upstream.Headers.TryAddWithoutValidation("X-Fingerly-Proxy-Key", _proxyKey);
+        for (int i = 0; i < ForwardedClientHeaders.Length; i++)
         {
-            upstream.Headers.TryAddWithoutValidation("X-Fingerly-Proxy-Key", _key);
-        }
-        string? idempotency = Safe(request.Header("Idempotency-Key"));
-        if (!string.IsNullOrEmpty(idempotency))
-        {
-            upstream.Headers.TryAddWithoutValidation("Idempotency-Key", idempotency);
+            string name = ForwardedClientHeaders[i];
+            string? value = SafeNonBlank(request.Header(name));
+            if (value is not null)
+            {
+                upstream.Headers.TryAddWithoutValidation(name, value);
+            }
         }
     }
 
     /// <summary>Drops a visitor-supplied value that could not go in a header.</summary>
     private static string? Safe(string? value) => Keys.IsHeaderSafe(value) ? value : null;
 
+    /// <summary>Drops a visitor-supplied value that is blank or could not go in a header.</summary>
+    private static string? SafeNonBlank(string? value) =>
+        !string.IsNullOrWhiteSpace(value) && Keys.IsHeaderSafe(value) ? value : null;
+
+    private static HashSet<string> NormalizeAllowedOrigins(IReadOnlyList<string>? origins)
+    {
+        var set = new HashSet<string>(StringComparer.Ordinal);
+        if (origins is null)
+        {
+            return set;
+        }
+        for (int i = 0; i < origins.Count; i++)
+        {
+            string? candidate = origins[i]?.Trim();
+            if (!string.IsNullOrEmpty(candidate) && Keys.IsHeaderSafe(candidate))
+            {
+                set.Add(candidate!);
+            }
+        }
+        return set;
+    }
+
+    private static IReadOnlyList<KeyValuePair<string, string>> CorsHeaders(string? matchedOrigin)
+    {
+        if (matchedOrigin is null)
+        {
+            return Array.Empty<KeyValuePair<string, string>>();
+        }
+        var headers = new List<KeyValuePair<string, string>>(5);
+        AppendCorsHeaders(headers, matchedOrigin);
+        return headers;
+    }
+
+    private static void AppendCorsHeaders(
+        List<KeyValuePair<string, string>> headers, string? matchedOrigin)
+    {
+        if (matchedOrigin is null)
+        {
+            return;
+        }
+        headers.Add(new KeyValuePair<string, string>("Access-Control-Allow-Origin", matchedOrigin));
+        headers.Add(new KeyValuePair<string, string>("Vary", "Origin"));
+        headers.Add(new KeyValuePair<string, string>("Access-Control-Allow-Methods", "POST, OPTIONS"));
+        headers.Add(new KeyValuePair<string, string>(
+            "Access-Control-Allow-Headers",
+            "content-type, x-api-key, idempotency-key, x-fingerly-sdk-platform"));
+        headers.Add(new KeyValuePair<string, string>(
+            "Access-Control-Expose-Headers",
+            "x-request-id, ratelimit-limit, ratelimit-remaining, retry-after"));
+    }
+
     /// <summary>
     /// Returns the upstream response, uncacheable and with only the
     /// allowlisted headers.
     /// </summary>
-    private static ProxyResponse Relay(HttpResponseMessage response, int status, byte[] body)
+    private static ProxyResponse Relay(
+        HttpResponseMessage response, int status, byte[] body, string? corsOrigin)
     {
         var headers = new List<KeyValuePair<string, string>>();
         Collect(headers, response.Headers);
         Collect(headers, response.Content.Headers);
         headers.Add(new KeyValuePair<string, string>("Cache-Control", "no-store"));
+        AppendCorsHeaders(headers, corsOrigin);
         return new ProxyResponse(status, headers, body);
     }
 
@@ -482,8 +657,10 @@ public sealed class FingerlyProxy : IDisposable
             foreach (string value in header.Value)
             {
                 // Kestrel throws while writing a control or non-ASCII byte,
-                // which would turn an upstream's answer into an empty 500.
-                if (Keys.IsHeaderSafe(value))
+                // which would turn an upstream's answer into an empty 500;
+                // values naming Fingerly are dropped so blockers cannot match them.
+                if (Keys.IsHeaderSafe(value)
+                    && value.IndexOf("fingerly", StringComparison.OrdinalIgnoreCase) < 0)
                 {
                     headers.Add(new KeyValuePair<string, string>(header.Key, value));
                 }

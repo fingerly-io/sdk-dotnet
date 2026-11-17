@@ -158,6 +158,81 @@ public class ContractTest
         Assert.False(string.IsNullOrEmpty(ProjectIdOf(delivery.Data)));
     }
 
+    [Fact]
+    public void OpenApiRetiresSupplementAndDeferredToken()
+    {
+        using JsonDocument openApi = JsonDocument.Parse(
+            File.ReadAllBytes(Path.Combine(Fixtures.ContractDirectory, "openapi.json")));
+        JsonElement paths = openApi.RootElement.GetProperty("paths");
+
+        Assert.True(paths.TryGetProperty("/api/v1/ingest", out _));
+        foreach (JsonProperty route in paths.EnumerateObject())
+        {
+            Assert.DoesNotContain("supplement", route.Name, StringComparison.OrdinalIgnoreCase);
+        }
+
+        JsonElement schemas = openApi.RootElement.GetProperty("components").GetProperty("schemas");
+        Assert.False(schemas.TryGetProperty("SupplementOut", out _));
+        JsonElement identifyProps = schemas.GetProperty("IdentifyOut").GetProperty("properties");
+        Assert.False(identifyProps.TryGetProperty("deferred_token", out _));
+        Assert.True(
+            schemas.GetProperty("SDKEventOut").GetProperty("properties").TryGetProperty("reason", out _));
+    }
+
+    [Fact]
+    public async Task DecodesUnidentifiableEventAndAllV3TriggerSignals()
+    {
+        const string Payload = """
+            {
+              "request_id": "0199a963-e400-7000-8000-000000000099",
+              "visitor_id": "",
+              "occurred_at": "2026-01-02T03:04:05Z",
+              "state": "unavailable",
+              "reason": "unidentifiable_device",
+              "suspect_score": 88,
+              "suspect_level": "high",
+              "triggers": [
+                {"signal": "attestation_failed", "group": "attestation_failed", "weight": 40, "confidence": "high"},
+                {"signal": "attestation_downgrade", "group": "attestation_failed", "weight": 30, "confidence": "high"},
+                {"signal": "device_inconsistent", "weight": 20, "confidence": "high"},
+                {"signal": "report_incomplete", "weight": 15, "confidence": "medium"},
+                {"signal": "probe_errors", "group": "report_incomplete", "weight": 4, "confidence": "low"},
+                {"signal": "fetch_metadata_missing", "group": "bot", "weight": 2, "confidence": "low"},
+                {"signal": "web_ticket_missing", "group": "report_incomplete", "weight": 4, "confidence": "low"},
+                {"signal": "web_ticket_invalid", "group": "browser_tampering", "weight": 20, "confidence": "high"},
+                {"signal": "tampering", "weight": 25, "confidence": "high"},
+                {"signal": "custom_root_ca", "weight": 30, "confidence": "high"},
+                {"signal": "secondary_user_profile", "weight": 5, "confidence": "low"}
+              ],
+              "has_document": false
+            }
+            """;
+        await using TestApi api = await TestApi.RespondAsync(200, Payload);
+        using FingerlyClient fingerly = Client(api);
+
+        Event stored = await fingerly.Events.GetAsync("0199a963-e400-7000-8000-000000000099");
+
+        Assert.Equal(string.Empty, stored.VisitorId);
+        Assert.Equal("unavailable", stored.State);
+        Assert.Equal("unidentifiable_device", stored.Reason);
+        Assert.Equal(88, stored.SuspectScore);
+        Assert.Equal(11, stored.Triggers.Count);
+        Assert.Equal("attestation_failed", stored.Triggers[0].Group);
+        Assert.Equal("attestation_failed", stored.Triggers[1].Group);
+        Assert.Equal("report_incomplete", stored.Triggers[4].Group);
+        Assert.Equal("bot", stored.Triggers[5].Group);
+        Assert.Equal("report_incomplete", stored.Triggers[6].Group);
+        Assert.Equal("browser_tampering", stored.Triggers[7].Group);
+        Assert.Equal("web_ticket_missing", EventTrigger.SignalWebTicketMissing);
+        Assert.Equal("web_ticket_invalid", EventTrigger.SignalWebTicketInvalid);
+        var actualSignals = new List<string>();
+        foreach (EventTrigger trigger in stored.Triggers)
+        {
+            actualSignals.Add(trigger.Signal!);
+        }
+        Assert.Equal(EventTrigger.V3Signals, actualSignals);
+    }
+
     private static string? ProjectIdOf(JsonElement body) =>
         body.TryGetProperty("project_id", out JsonElement value)
             && value.ValueKind == JsonValueKind.String
@@ -165,5 +240,5 @@ public class ContractTest
             : null;
 
     private static FingerlyClient Client(TestApi api) =>
-        new(new FingerlyOptions { SecretKey = SecretKey, Endpoint = api.Origin });
+        new(new FingerlyOptions { SecretKey = SecretKey, Endpoint = api.Origin, AllowInsecureLoopback = true });
 }

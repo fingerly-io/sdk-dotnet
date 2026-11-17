@@ -106,6 +106,45 @@ public class FingerlyApiException : FingerlyException
     public bool IsPending => Status == 404 && Code == "event_pending";
 
     /// <summary>
+    /// Reports whether this is a consume for an event that was already
+    /// consumed (<c>409 event_already_consumed</c>). Such an error is always a
+    /// <see cref="FingerlyEventAlreadyConsumedException"/>, which carries when
+    /// it was consumed.
+    /// </summary>
+    public bool IsEventAlreadyConsumed => Status == 409 && Code == FingerlyEventAlreadyConsumedException.ErrorCode;
+
+    /// <summary>
+    /// Apple's HTTP status for a <c>422 apple_rejected</c> DeviceCheck call,
+    /// read from the <c>apple_status</c> entry of <see cref="Details"/>, or
+    /// null for every other error.
+    /// </summary>
+    /// <remarks>See <see cref="DeviceCheckErrors"/> for the codes those calls answer.</remarks>
+    public int? AppleStatus
+    {
+        get
+        {
+            if (Code != DeviceCheckErrors.AppleRejected || Details is not JsonElement details
+                || details.ValueKind != JsonValueKind.Array)
+            {
+                return null;
+            }
+            foreach (JsonElement entry in details.EnumerateArray())
+            {
+                if (entry.ValueKind == JsonValueKind.Object
+                    && entry.TryGetProperty("field", out JsonElement name)
+                    && name.ValueKind == JsonValueKind.String && name.GetString() == "apple_status"
+                    && entry.TryGetProperty("issue", out JsonElement issue)
+                    && issue.ValueKind == JsonValueKind.String
+                    && int.TryParse(issue.GetString(), NumberStyles.None, CultureInfo.InvariantCulture, out int status))
+                {
+                    return status;
+                }
+            }
+            return null;
+        }
+    }
+
+    /// <summary>
     /// The seconds the API asked you to wait before trying again, from
     /// <c>Retry-After</c> (an HTTP date becomes seconds from now), or null
     /// when it sent none.
@@ -121,6 +160,34 @@ public class FingerlyApiException : FingerlyException
             CultureInfo.InvariantCulture, "Fingerly API returned HTTP {0}", status);
         return string.IsNullOrEmpty(code) ? prefix : prefix + " (" + code + ")";
     }
+}
+
+/// <summary>
+/// Thrown when an event was already consumed: <c>409 event_already_consumed</c>
+/// from <see cref="EventsService.ConsumeAsync"/>.
+/// </summary>
+/// <remarks>
+/// The event already backed one decision; refuse the action it was presented
+/// for. <see cref="FingerlyApiException.Status"/> is 409 and
+/// <see cref="FingerlyApiException.Code"/> is <c>event_already_consumed</c>.
+/// </remarks>
+public sealed class FingerlyEventAlreadyConsumedException : FingerlyApiException
+{
+    /// <summary>The <see cref="FingerlyApiException.Code"/> this exception is raised for.</summary>
+    public const string ErrorCode = "event_already_consumed";
+
+    internal FingerlyEventAlreadyConsumedException(
+        int status, string? code, JsonElement? details, string? requestId, int? retryAfter, string? consumedAt)
+        : base(status, code, details, requestId, retryAfter)
+    {
+        ConsumedAt = consumedAt;
+    }
+
+    /// <summary>
+    /// When the event was first consumed, as the API sent it (RFC 3339), or
+    /// <see langword="null"/> when the answer did not say.
+    /// </summary>
+    public string? ConsumedAt { get; }
 }
 
 /// <summary>

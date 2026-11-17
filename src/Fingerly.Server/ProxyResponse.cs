@@ -51,13 +51,53 @@ public sealed class ProxyResponse
     }
 
     /// <summary>Builds a plain-text response that never reached Fingerly.</summary>
-    internal static ProxyResponse Refusal(int status, string message)
+    internal static ProxyResponse Refusal(int status, string message) =>
+        Refusal(status, message, Array.Empty<KeyValuePair<string, string>>());
+
+    /// <summary>Builds a plain-text response with extra headers (such as Allow or CORS).</summary>
+    internal static ProxyResponse Refusal(
+        int status, string message, IReadOnlyList<KeyValuePair<string, string>> extraHeaders)
     {
-        var headers = new List<KeyValuePair<string, string>>(2)
+        var headers = new List<KeyValuePair<string, string>>(2 + extraHeaders.Count)
         {
             new("Content-Type", "text/plain; charset=utf-8"),
             new("Cache-Control", "no-store"),
         };
+        for (int i = 0; i < extraHeaders.Count; i++)
+        {
+            headers.Add(extraHeaders[i]);
+        }
         return new ProxyResponse(status, headers, Encoding.UTF8.GetBytes(message));
+    }
+
+    /// <summary>Builds a JSON refusal response that never reached Fingerly.</summary>
+    internal static ProxyResponse JsonRefusal(
+        int status, string json, IReadOnlyList<KeyValuePair<string, string>> extraHeaders)
+    {
+        var headers = new List<KeyValuePair<string, string>>(2 + extraHeaders.Count)
+        {
+            new("Content-Type", "application/json"),
+            new("Cache-Control", "no-store"),
+        };
+        for (int i = 0; i < extraHeaders.Count; i++)
+        {
+            headers.Add(extraHeaders[i]);
+        }
+        return new ProxyResponse(status, headers, Encoding.UTF8.GetBytes(json));
+    }
+
+    /// <summary>Builds an uncacheable bodiless response (such as 204 preflight).</summary>
+    internal static ProxyResponse Bodiless(
+        int status, IReadOnlyList<KeyValuePair<string, string>> extraHeaders)
+    {
+        var headers = new List<KeyValuePair<string, string>>(1 + extraHeaders.Count)
+        {
+            new("Cache-Control", "no-store"),
+        };
+        for (int i = 0; i < extraHeaders.Count; i++)
+        {
+            headers.Add(extraHeaders[i]);
+        }
+        return new ProxyResponse(status, headers, Array.Empty<byte>());
     }
 }

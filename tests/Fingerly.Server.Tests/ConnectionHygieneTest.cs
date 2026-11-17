@@ -35,6 +35,7 @@ public class ConnectionHygieneTest
             ProxyKey = ProxyKey,
             Path = "/p",
             Upstream = upstream,
+            AllowInsecureLoopback = true,
             ClientIp = _ => "203.0.113.7",
         });
 
@@ -42,6 +43,7 @@ public class ConnectionHygieneTest
     {
         var request = new ProxyRequest("POST", "/p") { Body = new MemoryStream(Encoding.UTF8.GetBytes("{}")) };
         request.AddHeader("X-API-Key", PublicKey);
+        request.AddHeader("Origin", "https://shop.example");
         return request;
     }
 
@@ -63,7 +65,7 @@ public class ConnectionHygieneTest
     public async Task TheClientNeverReplaysAnUpstreamCookie()
     {
         await using TestApi api = await UpstreamSettingACookie();
-        using var fingerly = new FingerlyClient(new FingerlyOptions { SecretKey = SecretKey, Endpoint = api.Origin });
+        using var fingerly = new FingerlyClient(new FingerlyOptions { SecretKey = SecretKey, Endpoint = api.Origin, AllowInsecureLoopback = true });
 
         for (int i = 0; i < 3; i++)
         {
@@ -90,7 +92,7 @@ public class ConnectionHygieneTest
 
         await using TestApi upstream = await UpstreamSettingACookie();
         using FingerlyProxy proxy = Proxy(upstream.Origin);
-        using var fingerly = new FingerlyClient(new FingerlyOptions { SecretKey = SecretKey, Endpoint = upstream.Origin });
+        using var fingerly = new FingerlyClient(new FingerlyOptions { SecretKey = SecretKey, Endpoint = upstream.Origin, AllowInsecureLoopback = true });
 
         await proxy.HandleAsync(Post());
         await fingerly.Events.GetAsync("0199a963-e400-7000-8000-000000000001");
@@ -114,7 +116,7 @@ public class ConnectionHygieneTest
         {
             using FingerlyProxy proxy = Proxy(upstream.Origin);
             await proxy.HandleAsync(Post());
-            using var fingerly = new FingerlyClient(new FingerlyOptions { SecretKey = SecretKey, Endpoint = upstream.Origin });
+            using var fingerly = new FingerlyClient(new FingerlyOptions { SecretKey = SecretKey, Endpoint = upstream.Origin, AllowInsecureLoopback = true });
             await fingerly.Events.GetAsync("0199a963-e400-7000-8000-000000000001");
         }
 

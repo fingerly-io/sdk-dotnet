@@ -10,12 +10,19 @@ using var fingerly = new FingerlyClient(new FingerlyOptions
 {
     SecretKey = "fly_sk_production_trimcheck",
     Endpoint = "http://127.0.0.1:9",
+    AllowInsecureLoopback = true,
     Timeout = TimeSpan.FromMilliseconds(250),
 });
 
 await Expect<FingerlyException>(() => fingerly.Events.GetAsync("r1"));
 await Expect<FingerlyException>(
     () => fingerly.Events.ListAsync(new EventListOptions { Level = "high", Limit = 5 }));
+await Expect<FingerlyException>(() => fingerly.Events.ConsumeAsync("r1"));
+await Expect<FingerlyException>(
+    () => fingerly.Events.VerifyAsync("r1", new VerifyOptions { Tag = "checkout" }));
+await Expect<FingerlyException>(() => fingerly.DeviceCheck.QueryAsync("r1"));
+await Expect<FingerlyException>(
+    () => fingerly.DeviceCheck.WriteAsync("r1", new DeviceCheckWrite { Bit0 = true }));
 
 Console.WriteLine(Webhooks.Verify(
     "whsec", Encoding.UTF8.GetBytes("{}"), "1800000000", "sha256=nope"));
@@ -27,6 +34,7 @@ using var proxy = new FingerlyProxy(new FingerlyProxyOptions
     ProxyKey = "fly_px_production_trimcheck",
     Path = "/k7x2qm4a",
     Upstream = "http://127.0.0.1:9",
+    AllowInsecureLoopback = true,
     ClientIp = _ => "203.0.113.7",
 });
 var request = new ProxyRequest("POST", "/k7x2qm4a")
@@ -34,6 +42,7 @@ var request = new ProxyRequest("POST", "/k7x2qm4a")
     Body = new MemoryStream(Encoding.UTF8.GetBytes("{}")),
 };
 request.AddHeader("X-API-Key", "fly_pk_production_trimcheck");
+request.AddHeader("Origin", "https://shop.example");
 Console.WriteLine((await proxy.HandleAsync(request)).Status);
 
 Console.WriteLine("trim check ok");

@@ -98,6 +98,7 @@ public class FingerlyProxyMiddlewareTest
         {
             ProxyKey = ProxyKey,
             Upstream = "http://127.0.0.1:9",
+            AllowInsecureLoopback = true,
             ClientIp = _ => "203.0.113.7",
         });
         WebApplicationBuilder builder = WebApplication.CreateSlimBuilder();
@@ -179,6 +180,7 @@ public class FingerlyProxyMiddlewareTest
             ProxyKey = ProxyKey,
             Path = "/k7x2qm4a",
             Upstream = upstream.Origin,
+            AllowInsecureLoopback = true,
             MaxBodyBytes = 64,
             ClientIp = _ => "203.0.113.7",
         });
@@ -193,6 +195,7 @@ public class FingerlyProxyMiddlewareTest
             Content = new StringContent(new string('a', 4096), Encoding.UTF8, "application/json"),
         };
         request.Headers.TryAddWithoutValidation("X-API-Key", PublicKey);
+        request.Headers.TryAddWithoutValidation("Origin", "https://shop.example");
         HttpResponseMessage answer = await site.Client.SendAsync(request);
 
         Assert.Equal(HttpStatusCode.RequestEntityTooLarge, answer.StatusCode);
@@ -233,6 +236,7 @@ public class FingerlyProxyMiddlewareTest
             ProxyKey = ProxyKey,
             Path = "/k7x2qm4a",
             Upstream = upstream.Origin,
+            AllowInsecureLoopback = true,
             ClientIp = request => request.Header("CF-Connecting-IP"),
         });
         await using TestSite site = await TestSite.StartAsync(app =>
@@ -246,6 +250,7 @@ public class FingerlyProxyMiddlewareTest
             Content = new StringContent("{}", Encoding.UTF8, "application/json"),
         };
         request.Headers.TryAddWithoutValidation("X-API-Key", PublicKey);
+        request.Headers.TryAddWithoutValidation("Origin", "https://shop.example");
         request.Headers.TryAddWithoutValidation("CF-Connecting-IP", "198.51.100.9");
         request.Headers.TryAddWithoutValidation("X-Forwarded-For", "10.0.0.1, 198.51.100.9");
         await site.Client.SendAsync(request);
@@ -267,11 +272,14 @@ public class FingerlyProxyMiddlewareTest
             Content = new StringContent("""{"sdk":1}""", Encoding.UTF8, "application/json"),
         };
         request.Headers.TryAddWithoutValidation("X-API-Key", PublicKey);
+        request.Headers.TryAddWithoutValidation("Origin", "https://shop.example");
         return site.Client.SendAsync(request);
     }
 
     [Theory]
     [InlineData("/k7x2qm4a/")]
+    [InlineData("/k7x2qm4a/supplement")]
+    [InlineData("/k7x2qm4a/events/r1/supplement")]
     [InlineData("/K7X2QM4A")]
     [InlineData("/x/../k7x2qm4a")]
     [InlineData("/k7x2qm4%61")]
@@ -304,6 +312,7 @@ public class FingerlyProxyMiddlewareTest
             ProxyKey = ProxyKey,
             Path = "/k7x2qm4a",
             Upstream = upstream.Origin,
+            AllowInsecureLoopback = true,
             ClientIp = request =>
             {
                 seen.Enqueue(request.RemoteAddress);
@@ -317,11 +326,49 @@ public class FingerlyProxyMiddlewareTest
             Content = new StringContent("{}", Encoding.UTF8, "application/json"),
         };
         request.Headers.TryAddWithoutValidation("X-API-Key", PublicKey);
+        request.Headers.TryAddWithoutValidation("Origin", "https://shop.example");
         HttpResponseMessage answer = await site.Client.SendAsync(request);
 
         Assert.Equal(HttpStatusCode.OK, answer.StatusCode);
         Assert.Equal("127.0.0.1", Assert.Single(seen));
         Assert.Equal("127.0.0.1", upstream.Requests[0].Header("X-Fingerly-Client-IP"));
+    }
+
+    [Fact]
+    public async Task RefusesOriginlessBrowserPostAndAllowsNativePlatformWithoutSynthesizingOrigin()
+    {
+        const string RawBody = """{"v":3,"signals":{"price":142.50}}""";
+        await using TestApi upstream = await TestApi.RespondAsync(200, """{"visitor_id":"v1"}""");
+        using FingerlyProxy proxy = Proxy(upstream.Origin, "/k7x2qm4a");
+        await using TestSite site = await TestSite.StartAsync(app => app.UseFingerlyProxy(proxy));
+
+        using var originless = new HttpRequestMessage(HttpMethod.Post, "/k7x2qm4a")
+        {
+            Content = new StringContent(RawBody, Encoding.UTF8, "application/json"),
+        };
+        originless.Headers.TryAddWithoutValidation("X-API-Key", PublicKey);
+        originless.Headers.TryAddWithoutValidation("X-Fingerly-Origin", "https://spoofed.example");
+        HttpResponseMessage refused = await site.Client.SendAsync(originless);
+
+        Assert.Equal(HttpStatusCode.BadRequest, refused.StatusCode);
+        Assert.Equal("no-store", refused.Headers.CacheControl!.ToString());
+        Assert.Contains("missing_origin", await refused.Content.ReadAsStringAsync(), StringComparison.Ordinal);
+        Assert.Empty(upstream.Requests);
+
+        using var native = new HttpRequestMessage(HttpMethod.Post, "/k7x2qm4a")
+        {
+            Content = new StringContent(RawBody, Encoding.UTF8, "application/json"),
+        };
+        native.Headers.TryAddWithoutValidation("X-API-Key", PublicKey);
+        native.Headers.TryAddWithoutValidation("X-Fingerly-SDK-Platform", "ios");
+        native.Headers.TryAddWithoutValidation("X-Fingerly-Origin", "https://spoofed.example");
+        HttpResponseMessage accepted = await site.Client.SendAsync(native);
+
+        Assert.Equal(HttpStatusCode.OK, accepted.StatusCode);
+        RecordedRequest sent = Assert.Single(upstream.Requests);
+        Assert.Equal(RawBody, sent.Text);
+        Assert.Equal("ios", sent.Header("X-Fingerly-SDK-Platform"));
+        Assert.Null(sent.Header("X-Fingerly-Origin"));
     }
 
     private static FingerlyProxy Proxy(string upstream, string path) =>
@@ -330,6 +377,7 @@ public class FingerlyProxyMiddlewareTest
             ProxyKey = ProxyKey,
             Path = path,
             Upstream = upstream,
+            AllowInsecureLoopback = true,
             ClientIp = _ => "203.0.113.7",
         });
 }

@@ -223,5 +223,5 @@ public class EventsServiceTest
     }
 
     private static FingerlyClient Client(TestApi api) =>
-        new(new FingerlyOptions { SecretKey = SecretKey, Endpoint = api.Origin });
+        new(new FingerlyOptions { SecretKey = SecretKey, Endpoint = api.Origin, AllowInsecureLoopback = true });
 }

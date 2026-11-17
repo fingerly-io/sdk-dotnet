@@ -9,9 +9,68 @@ namespace Fingerly;
 /// <summary>One signal group that contributed to an event's suspect score.</summary>
 public sealed class EventTrigger
 {
-    /// <summary>The signal group, such as <c>vpn</c> or <c>bot</c>.</summary>
+    /// <summary>Hardware attestation failed cryptographic, chain, replay or ownership verification.</summary>
+    public const string SignalAttestationFailed = "attestation_failed";
+
+    /// <summary>Native device could have offered hardware attestation proof and did not.</summary>
+    public const string SignalAttestationMissing = "attestation_missing";
+
+    /// <summary>Unproven or rejected native report naming an install an attested key owns.</summary>
+    public const string SignalAttestationDowngrade = "attestation_downgrade";
+
+    /// <summary>Reported hardware, OS or runtime realms contradict each other.</summary>
+    public const string SignalDeviceInconsistent = "device_inconsistent";
+
+    /// <summary>Evidence a report always carries is missing: a required native security source or the web worker-realm cross-check.</summary>
+    public const string SignalReportIncomplete = "report_incomplete";
+
+    /// <summary>Native security source ran but lists probes that threw, were denied or timed out.</summary>
+    public const string SignalProbeErrors = "probe_errors";
+
+    /// <summary>Browser report without <c>Sec-Fetch-*</c> headers from a browser that always sends them.</summary>
+    public const string SignalFetchMetadataMissing = "fetch_metadata_missing";
+
+    /// <summary>Browser report that carried no single-use freshness ticket.</summary>
+    public const string SignalWebTicketMissing = "web_ticket_missing";
+
+    /// <summary>Browser report whose freshness ticket did not verify: bad signature, another key's or origin's, expired, or already used.</summary>
+    public const string SignalWebTicketInvalid = "web_ticket_invalid";
+
+    /// <summary>Runtime code or natives were patched or tampered with.</summary>
+    public const string SignalTampering = "tampering";
+
+    /// <summary>Browser tampering signal group key on stored event rows.</summary>
+    public const string SignalBrowserTampering = "browser_tampering";
+
+    /// <summary>TLS chain anchored at a non-WebPKI or user-installed root authority.</summary>
+    public const string SignalCustomRootCa = "custom_root_ca";
+
+    /// <summary>Managed Android work profile or secondary OS user profile without cloner indicators.</summary>
+    public const string SignalSecondaryUserProfile = "secondary_user_profile";
+
+    /// <summary>The v3 anti-spoofing signal identifiers.</summary>
+    public static IReadOnlyList<string> V3Signals { get; } = new[]
+    {
+        SignalAttestationFailed,
+        SignalAttestationDowngrade,
+        SignalDeviceInconsistent,
+        SignalReportIncomplete,
+        SignalProbeErrors,
+        SignalFetchMetadataMissing,
+        SignalWebTicketMissing,
+        SignalWebTicketInvalid,
+        SignalTampering,
+        SignalCustomRootCa,
+        SignalSecondaryUserProfile,
+    };
+
+    /// <summary>The signal or signal group, such as <c>vpn</c>, <c>tampering</c> or <c>attestation_failed</c>.</summary>
     [JsonPropertyName("signal")]
     public string? Signal { get; init; }
+
+    /// <summary>Optional group identifier when returned alongside a raw signal.</summary>
+    [JsonPropertyName("group")]
+    public string? Group { get; init; }
 
     /// <summary>The group's combined weight in this score.</summary>
     [JsonPropertyName("weight")]
@@ -42,7 +101,10 @@ public sealed class Event
     [JsonPropertyName("request_id")]
     public string? RequestId { get; init; }
 
-    /// <summary>The visitor the device was identified as.</summary>
+    /// <summary>
+    /// The visitor the device was identified as, or <c>""</c> when the
+    /// submission was unidentifiable.
+    /// </summary>
     [JsonPropertyName("visitor_id")]
     public string? VisitorId { get; init; }
 
@@ -56,6 +118,10 @@ public sealed class Event
     /// </summary>
     [JsonPropertyName("state")]
     public string? State { get; init; }
+
+    /// <summary>Why enrichment did not happen, on an unavailable event.</summary>
+    [JsonPropertyName("reason")]
+    public string? Reason { get; init; }
 
     /// <summary>The deployment the event came from.</summary>
     [JsonPropertyName("environment")]

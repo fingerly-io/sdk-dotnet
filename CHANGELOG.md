@@ -1,5 +1,38 @@
 # Changelog
 
+## 0.3.0
+
+- Synced the v3 single-call ingest contract snapshot (`openapi.json` and
+  `fixtures.json`), removing the retired supplement endpoint and
+  `deferred_token`.
+- Added `Event.Reason`, v3 `EventTrigger` anti-spoofing signal constants
+  (`attestation_failed`, `attestation_downgrade`, `device_inconsistent`,
+  `report_incomplete`, `probe_errors`, `fetch_metadata_missing`,
+  `web_ticket_missing`, `web_ticket_invalid`, `tampering`, `custom_root_ca`,
+  `secondary_user_profile`), optional
+  `EventTrigger.Group`, and empty `VisitorId` (`""`) support for unidentifiable
+  events.
+- Enforced the v3 first-party proxy relay contract: sanitize-and-restore of
+  validated `X-Fingerly-SDK-Platform`, `400 missing_origin` when both `Origin`
+  and a validated native platform header are absent (never synthesizing
+  `X-Fingerly-Origin`), forwarding `X-Fingerly-Host`, `Sec-Fetch-*` and
+  `Sec-CH-UA-*`, and optional `AllowedOrigins` CORS preflight handling.
+- Added `fingerly.DeviceCheck`: `QueryAsync` and `WriteAsync` spend the
+  DeviceCheck token held for an iOS event to read or write the device's two
+  bits, retrying only a `503` or a transport failure with the identical
+  request. `DeviceCheckErrors` names the codes, and
+  `FingerlyApiException.AppleStatus` carries Apple's status on
+  `apple_rejected`.
+- Added `fingerly.Events.VerifyAsync(requestId, VerifyOptions?)`, which reads
+  an event and checks it exists, is recent (`MaxAgeSeconds`, 300 by default),
+  carries the expected `Tag`, is identifiable and scored, then consumes it
+  once, reporting the first failure as a `VerifyReasons` value; and
+  `fingerly.Events.ConsumeAsync(requestId)`, which throws
+  `FingerlyEventAlreadyConsumedException` (with `ConsumedAt`) on
+  `409 event_already_consumed`.
+- `FingerlyProxy` requires `ProxyKey` and checks the caller's public key on
+  every request; it accepts no secret key and never sends one upstream.
+
 ## 0.2.0
 
 - `Event.ProjectId` (`project_id`) is the Fingerly project an event belongs
