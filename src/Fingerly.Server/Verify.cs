@@ -72,7 +72,10 @@ public sealed class VerifyOptions
 public static class VerifyReasons
 {
     /// <summary>Every check passed.</summary>
-    public const string None = "";
+    public const string Ok = "";
+
+    /// <summary>Every check passed. The same string as <see cref="Ok"/>.</summary>
+    public const string None = Ok;
 
     /// <summary>No such event: never issued, or past retention.</summary>
     public const string NotFound = "not_found";

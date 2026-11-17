@@ -35,8 +35,8 @@ scores how suspicious it is.
 2. **Install.**
 
    ```sh
-   dotnet add package Fingerly.Server --version 0.3.0
-   dotnet add package Fingerly.Server.AspNetCore --version 0.3.0   # for the proxy and DI
+   dotnet add package Fingerly.Server --version 0.4.0
+   dotnet add package Fingerly.Server.AspNetCore --version 0.4.0   # for the proxy and DI
    ```
 
 3. **Read an event.**
@@ -140,7 +140,7 @@ retry. An empty, `.` or `..` request id is an `ArgumentException`.
 
 ```csharp
 EventPage page = await fingerly.Events.ListAsync(
-    new EventListOptions { Level = "high", Limit = 50 }, cancellationToken);
+    new EventListOptions { Level = SuspectLevels.High, Limit = 50 }, cancellationToken);
 ```
 
 `Event.ProjectId` is the UUID of the Fingerly project the event belongs to, on
@@ -197,18 +197,37 @@ genuine embedded WebView, or an unmatched high-risk Web payload), `VisitorId` is
 `""`; there are no `deferred_token`, `deferred_signals` or `supplements` fields
 in `v: 3`.
 
-`EventTrigger.V3Signals` groups the `v: 3` anti-spoofing and integrity signal
-constants on `EventTrigger`: `SignalAttestationFailed` (`"attestation_failed"`),
-`SignalAttestationDowngrade` (`"attestation_downgrade"`),
-`SignalDeviceInconsistent` (`"device_inconsistent"`),
-`SignalReportIncomplete` (`"report_incomplete"`),
-`SignalProbeErrors` (`"probe_errors"`),
-`SignalFetchMetadataMissing` (`"fetch_metadata_missing"`),
-`SignalWebTicketMissing` (`"web_ticket_missing"`),
-`SignalWebTicketInvalid` (`"web_ticket_invalid"`),
-`SignalTampering` (`"tampering"`),
-`SignalCustomRootCa` (`"custom_root_ca"`) and
-`SignalSecondaryUserProfile` (`"secondary_user_profile"`).
+### Named values
+
+The string properties with a fixed set of values have a static class of
+`const string` values each, holding the exact strings the API sends. The
+properties stay `string`, so a value the server adds after this SDK was
+released still deserializes: compare with `==` or use the constants as
+`switch` labels, and keep a default branch. The class names are plural so
+they never collide with the properties they describe (or with
+`System.Environment`).
+
+| Constants | Values of |
+| --- | --- |
+| `Signals` | `EventTrigger.Signal` (signal groups, such as `Signals.Vpn`) and the archived document's `risk.triggers[].signal` (detectors, such as `Signals.VpnPublic`) |
+| `SuspectLevels` | `Event.SuspectLevel` and `EventListOptions.Level` |
+| `Confidences` | `EventTrigger.Confidence` |
+| `EventStates`, `Environments`, `Platforms` | `Event.State`, `Event.Environment`, `Event.Platform` |
+| `AnonymityNetworks`, `DeviceKinds`, `VisitorKinds` | `Event.AnonymityNetwork`, `Event.DeviceKind`, `Event.VisitorKind` |
+| `AttestationStates`, `AttestationStatuses`, `AttestSkippedReasons` | the archived document's `attestation.state`, `attestation.status` and `attestation.attest_skipped` |
+| `VerifyReasons` | `VerifyResult.Reason` |
+| `WebhookEventTypes`, `WebhookEnvironments` | `WebhookEvent.Type`, `WebhookEvent.Environment` |
+
+```csharp
+bool suppressed = ev.Triggers.Any(t => t.Signal == Signals.FingerprintSuppressed);
+```
+
+`EventTrigger.V3Signals` groups the `v: 3` anti-spoofing and integrity
+signals: `Signals.AttestationFailed`, `AttestationDowngrade`,
+`DeviceInconsistent`, `ReportIncomplete`, `ProbeErrors`,
+`FetchMetadataMissing`, `WebTicketMissing`, `WebTicketInvalid`, `Tampering`,
+`CustomRootCa` and `SecondaryUserProfile`. The `EventTrigger.Signal…`
+constants are the same strings.
 
 ### Verify a backend action
 
@@ -226,7 +245,8 @@ first that fails:
 | It carries a suspect score | `unscored` (`Unscored`) |
 | It was not consumed before | `already_consumed` (`AlreadyConsumed`) |
 
-When every check passes, `Ok` is true and `Reason` is `""`. Consumption comes
+When every check passes, `Ok` is true and `Reason` is `""`
+(`VerifyReasons.Ok`). Consumption comes
 last and happens only when every other check passed, so one event backs one
 decision; pass `Consume = false` to check without consuming. Score policy
 stays with you: `VerifyAsync` never looks at the score, level or triggers.
@@ -246,7 +266,7 @@ catch (FingerlyApiException e) when (e.IsPending)
 }
 
 if (!result.Ok) return "refuse"; // result.Reason says why
-if (result.Event!.SuspectLevel == "high") return "review";
+if (result.Event!.SuspectLevel == SuspectLevels.High) return "review";
 return "allow";
 ```
 
@@ -388,6 +408,20 @@ project as `data.project_id`; `identification.refused` carries it only when the
 refused request named a known key. Read it with
 `Data.TryGetProperty("project_id", out var projectId)`.
 
+```csharp
+switch (delivery.Type)
+{
+    case WebhookEventTypes.VisitorSuspect:
+        await ReviewAsync(delivery.Data, ct);
+        break;
+    case WebhookEventTypes.IdentificationCompleted:
+        await RecordAsync(delivery.Data, ct);
+        break;
+    default:
+        break; // a type added later: acknowledge it and move on
+}
+```
+
 ## First-party proxy (same-origin)
 
 Content blockers refuse browser requests to third-party APIs, and a refused
@@ -459,7 +493,7 @@ const fingerly = await load({ apiKey: 'fly_pk_…', endpoints: '/k7x2qm4a' })
 | Origin | A request without either `Origin` or a validated native `X-Fingerly-SDK-Platform` header (listed below) is rejected locally with `400` (`missing_origin`), and `X-Fingerly-Origin` is never synthesized from `Host`, `Referer` or the request URL. Only one channel goes upstream: when `Origin` is present it is sent as `X-Fingerly-Origin` and the platform header is dropped, as the API's direct path treats such a request as a browser one. |
 | Body size | Bodies over 1 MiB get `413`, enforced while reading rather than after buffering. |
 | Forwarded upstream | All incoming `X-Fingerly-*`, `Cookie`, `Authorization` and trace-context headers are stripped, restoring only a validated `X-Fingerly-SDK-Platform` (for a request without `Origin`) alongside `X-Fingerly-Host`, `Idempotency-Key`, `Sec-Fetch-*` and `Sec-CH-UA-*`. |
-| Proxy identity | The proxy reports itself upstream as `dotnet/0.3.0`, which the dashboard shows per proxy. |
+| Proxy identity | The proxy reports itself upstream as `dotnet/0.4.0`, which the dashboard shows per proxy. |
 | Relayed back | Only `Content-Type`, `X-Request-Id`, `RateLimit-Limit`, `RateLimit-Remaining` and `Retry-After`, with `Cache-Control: no-store` added. |
 | Upstream timeout | `504` ("Gateway timeout") if the upstream did not answer within `Timeout` (5 seconds by default). |
 | Other upstream failures | `502` ("Bad gateway") for anything else: refused, reset, truncated, larger than 4 MiB, undecodable, a redirect (never followed), or a status outside 200 to 599. |
@@ -587,7 +621,8 @@ check step. Never put production secrets in fixtures.
 `FingerlyClient` holds the options; `EventsService` owns the reads and the list
 filters, and `Event`, `EventPage` and `EventListOptions` are what they speak
 in; it also verifies and consumes events, with `VerifyOptions`,
-`VerifyResult`, `VerifyReasons` and `ConsumeResult`. `DeviceCheckService` spends held DeviceCheck tokens, with
+`VerifyResult`, `VerifyReasons` and `ConsumeResult`. `Signals` and
+`NamedValues.cs` hold the named string values. `DeviceCheckService` spends held DeviceCheck tokens, with
 `DeviceCheckBits`, `DeviceCheckWrite` and `DeviceCheckWriteResult`. `Webhooks` verifies signatures. `FingerlyProxy` holds every proxy decision,
 with `ProxyRequest` and `ProxyResponse` as the neutral shapes the hosts
 translate to. `SharedHttp` is the process-wide connection pool and reads every

@@ -10,43 +10,43 @@ namespace Fingerly;
 public sealed class EventTrigger
 {
     /// <summary>Hardware attestation failed cryptographic, chain, replay or ownership verification.</summary>
-    public const string SignalAttestationFailed = "attestation_failed";
+    public const string SignalAttestationFailed = Signals.AttestationFailed;
 
     /// <summary>Native device could have offered hardware attestation proof and did not.</summary>
-    public const string SignalAttestationMissing = "attestation_missing";
+    public const string SignalAttestationMissing = Signals.AttestationMissing;
 
     /// <summary>Unproven or rejected native report naming an install an attested key owns.</summary>
-    public const string SignalAttestationDowngrade = "attestation_downgrade";
+    public const string SignalAttestationDowngrade = Signals.AttestationDowngrade;
 
     /// <summary>Reported hardware, OS or runtime realms contradict each other.</summary>
-    public const string SignalDeviceInconsistent = "device_inconsistent";
+    public const string SignalDeviceInconsistent = Signals.DeviceInconsistent;
 
     /// <summary>Evidence a report always carries is missing: a required native security source or the web worker-realm cross-check.</summary>
-    public const string SignalReportIncomplete = "report_incomplete";
+    public const string SignalReportIncomplete = Signals.ReportIncomplete;
 
     /// <summary>Native security source ran but lists probes that threw, were denied or timed out.</summary>
-    public const string SignalProbeErrors = "probe_errors";
+    public const string SignalProbeErrors = Signals.ProbeErrors;
 
     /// <summary>Browser report without <c>Sec-Fetch-*</c> headers from a browser that always sends them.</summary>
-    public const string SignalFetchMetadataMissing = "fetch_metadata_missing";
+    public const string SignalFetchMetadataMissing = Signals.FetchMetadataMissing;
 
     /// <summary>Browser report that carried no single-use freshness ticket.</summary>
-    public const string SignalWebTicketMissing = "web_ticket_missing";
+    public const string SignalWebTicketMissing = Signals.WebTicketMissing;
 
     /// <summary>Browser report whose freshness ticket did not verify: bad signature, another key's or origin's, expired, or already used.</summary>
-    public const string SignalWebTicketInvalid = "web_ticket_invalid";
+    public const string SignalWebTicketInvalid = Signals.WebTicketInvalid;
 
     /// <summary>Runtime code or natives were patched or tampered with.</summary>
-    public const string SignalTampering = "tampering";
+    public const string SignalTampering = Signals.Tampering;
 
     /// <summary>Browser tampering signal group key on stored event rows.</summary>
-    public const string SignalBrowserTampering = "browser_tampering";
+    public const string SignalBrowserTampering = Signals.BrowserTampering;
 
     /// <summary>TLS chain anchored at a non-WebPKI or user-installed root authority.</summary>
-    public const string SignalCustomRootCa = "custom_root_ca";
+    public const string SignalCustomRootCa = Signals.CustomRootCa;
 
     /// <summary>Managed Android work profile or secondary OS user profile without cloner indicators.</summary>
-    public const string SignalSecondaryUserProfile = "secondary_user_profile";
+    public const string SignalSecondaryUserProfile = Signals.SecondaryUserProfile;
 
     /// <summary>The v3 anti-spoofing signal identifiers.</summary>
     public static IReadOnlyList<string> V3Signals { get; } = new[]
@@ -64,7 +64,7 @@ public sealed class EventTrigger
         SignalSecondaryUserProfile,
     };
 
-    /// <summary>The signal or signal group, such as <c>vpn</c>, <c>tampering</c> or <c>attestation_failed</c>.</summary>
+    /// <summary>The signal or signal group, such as <c>vpn</c>, <c>tampering</c> or <c>attestation_failed</c>. See <see cref="Signals"/>.</summary>
     [JsonPropertyName("signal")]
     public string? Signal { get; init; }
 
@@ -76,7 +76,7 @@ public sealed class EventTrigger
     [JsonPropertyName("weight")]
     public int Weight { get; init; }
 
-    /// <summary><c>low</c>, <c>medium</c> or <c>high</c>.</summary>
+    /// <summary><c>low</c>, <c>medium</c> or <c>high</c>. See <see cref="Confidences"/>.</summary>
     [JsonPropertyName("confidence")]
     public string? Confidence { get; init; }
 
@@ -114,7 +114,7 @@ public sealed class Event
 
     /// <summary>
     /// <c>enriched</c>, or <c>unavailable</c> when the network lookup could
-    /// not run.
+    /// not run. See <see cref="EventStates"/>.
     /// </summary>
     [JsonPropertyName("state")]
     public string? State { get; init; }
@@ -123,13 +123,17 @@ public sealed class Event
     [JsonPropertyName("reason")]
     public string? Reason { get; init; }
 
-    /// <summary>The deployment the event came from.</summary>
+    /// <summary>
+    /// The deployment the event came from: <c>production</c>, <c>staging</c>
+    /// or <c>development</c>. See <see cref="Environments"/>.
+    /// </summary>
     [JsonPropertyName("environment")]
     public string? Environment { get; init; }
 
     /// <summary>
     /// The scoring profile applied. It differs from <see cref="SdkPlatform"/>:
-    /// react-native-ios reports itself as such and is scored as ios.
+    /// react-native-ios reports itself as such and is scored as ios. See
+    /// <see cref="Platforms"/>.
     /// </summary>
     [JsonPropertyName("platform")]
     public string? Platform { get; init; }
@@ -190,8 +194,9 @@ public sealed class Event
     public string? AsnName { get; init; }
 
     /// <summary>
-    /// <c>tor</c>, <c>vpn</c>, <c>proxy</c> or <c>hosting</c>. Absent on an
-    /// ordinary consumer connection, which is most of them.
+    /// <c>tor</c>, <c>relay</c>, <c>vpn</c>, <c>proxy</c> or <c>hosting</c>
+    /// (see <see cref="AnonymityNetworks"/>). Absent on an ordinary consumer
+    /// connection, which is most of them.
     /// </summary>
     [JsonPropertyName("anonymity_network")]
     public string? AnonymityNetwork { get; init; }
@@ -208,11 +213,11 @@ public sealed class Event
     [JsonPropertyName("os")]
     public string? Os { get; init; }
 
-    /// <summary>The kind of device, such as <c>desktop</c> or <c>mobile</c>.</summary>
+    /// <summary>The kind of device, such as <c>desktop</c> or <c>mobile</c>. See <see cref="DeviceKinds"/>.</summary>
     [JsonPropertyName("device_kind")]
     public string? DeviceKind { get; init; }
 
-    /// <summary>The kind of visitor, such as <c>returning</c>.</summary>
+    /// <summary>The kind of visitor, such as <c>human</c> or <c>ai_bot</c>. See <see cref="VisitorKinds"/>.</summary>
     [JsonPropertyName("visitor_kind")]
     public string? VisitorKind { get; init; }
 
@@ -225,7 +230,8 @@ public sealed class Event
     public int? SuspectScore { get; init; }
 
     /// <summary>
-    /// <c>low</c>, <c>medium</c> or <c>high</c>. Absent when not scored.
+    /// <c>low</c>, <c>medium</c> or <c>high</c> (see <see cref="SuspectLevels"/>).
+    /// Absent when not scored.
     /// </summary>
     [JsonPropertyName("suspect_level")]
     public string? SuspectLevel { get; init; }
@@ -252,6 +258,10 @@ public sealed class Event
     /// carries no raw signals, user agent or address. Present when
     /// <see cref="HasDocument"/> is true and the archive could be read. Its
     /// contents are deliberately opaque, not a public contract.
+    /// <see cref="AttestationStates"/>, <see cref="AttestationStatuses"/> and
+    /// <see cref="AttestSkippedReasons"/> name the values of
+    /// <c>attestation.state</c>, <c>attestation.status</c> and
+    /// <c>attestation.attest_skipped</c>.
     /// </summary>
     [JsonPropertyName("document")]
     public JsonElement? Document { get; init; }

@@ -12,7 +12,7 @@ namespace Fingerly;
 /// An unset filter is not sent, so the server applies its own default.
 /// <code>
 /// var page = await fingerly.Events.ListAsync(
-///     new EventListOptions { Level = "high", Limit = 50 });
+///     new EventListOptions { Level = SuspectLevels.High, Limit = 50 });
 /// </code>
 /// </remarks>
 public sealed class EventListOptions
@@ -40,7 +40,7 @@ public sealed class EventListOptions
     /// <summary>Restricts the listing to one exact visitor id.</summary>
     public string? Visitor { get; set; }
 
-    /// <summary>Restricts it to <c>low</c>, <c>medium</c> or <c>high</c>.</summary>
+    /// <summary>Restricts it to <c>low</c>, <c>medium</c> or <c>high</c>; see <see cref="SuspectLevels"/>.</summary>
     public string? Level { get; set; }
 
     /// <summary>

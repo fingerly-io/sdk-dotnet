@@ -20,7 +20,7 @@ public sealed class WebhookEvent
     [JsonPropertyName("id")]
     public string? Id { get; init; }
 
-    /// <summary>The event name, such as <c>identification.completed</c>.</summary>
+    /// <summary>The event name, such as <c>identification.completed</c>. See <see cref="WebhookEventTypes"/>.</summary>
     [JsonPropertyName("type")]
     public string? Type { get; init; }
 
@@ -32,7 +32,7 @@ public sealed class WebhookEvent
     [JsonPropertyName("organization_id")]
     public string? OrganizationId { get; init; }
 
-    /// <summary>The deployment the event came from.</summary>
+    /// <summary>The deployment the event came from: <c>live</c> or <c>test</c>. See <see cref="WebhookEnvironments"/>.</summary>
     [JsonPropertyName("environment")]
     public string? Environment { get; init; }
 
