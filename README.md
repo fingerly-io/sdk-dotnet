@@ -96,15 +96,16 @@ Full guide: [docs.fingerly.io/docs/sdks/dotnet](https://docs.fingerly.io/docs/sd
 | Read or write the DeviceCheck bits of an iOS device | `DeviceCheck.QueryAsync` / `WriteAsync` | [DeviceCheck bits](#devicecheck-bits) |
 | Check a webhook delivery is genuine | `Webhooks.Verify` and `Webhooks.Parse` | [Verify webhooks](#verify-webhooks) |
 | Keep the browser SDK first-party, away from content blockers | `AddFingerlyProxy` with `MapFingerlyProxy` or `UseFingerlyProxy` | [First-party proxy](#first-party-proxy-same-origin) |
+| See AI crawlers that never run JavaScript, and ask what sent a request | `AddFingerlyAgentSightings` with `UseFingerlyAgentSightings` and `Lookup` | [AI crawlers on your server](#ai-crawlers-on-your-server) |
 
-On this page: [Packages](#packages) · [Read events](#read-events) · [DeviceCheck bits](#devicecheck-bits) · [Verify webhooks](#verify-webhooks) · [First-party proxy](#first-party-proxy-same-origin) · [Deadlines, limits and connections](#deadlines-limits-and-connections) · [Requirements](#requirements) · [Development](#development-and-release-preparation) · [Documentation](#documentation) · [Help](#help) · [Licence](#licence)
+On this page: [Packages](#packages) · [Read events](#read-events) · [DeviceCheck bits](#devicecheck-bits) · [Verify webhooks](#verify-webhooks) · [First-party proxy](#first-party-proxy-same-origin) · [AI crawlers on your server](#ai-crawlers-on-your-server) · [Deadlines, limits and connections](#deadlines-limits-and-connections) · [Requirements](#requirements) · [Development](#development-and-release-preparation) · [Documentation](#documentation) · [Help](#help) · [Licence](#licence)
 
 ## Packages
 
 | Package | Contains | For |
 | --- | --- | --- |
 | `Fingerly.Server` | client, webhooks, proxy core | everything |
-| `Fingerly.Server.AspNetCore` | middleware, endpoint routing, DI | the proxy |
+| `Fingerly.Server.AspNetCore` | middleware, endpoint routing, DI | the proxy and agent sightings |
 
 `Fingerly.Server` targets `net8.0` and `netstandard2.0`. On `net8.0` it has no
 dependencies at all, because `System.Text.Json` is part of the shared
@@ -568,6 +569,91 @@ mount it by translating those two shapes. Where that host routes only the one
 path to it, `Path` can stay unset. That is also why the core still runs on
 .NET Standard 2.0.
 
+## AI crawlers on your server
+
+AI crawlers and fetchers such as GPTBot or ClaudeBot mostly fetch pages
+without running their JavaScript, so the browser SDK never sees them.
+`AgentSightings` reports the requests your server served to Fingerly, which
+says what sent each one, and remembers the answers so your code can ask. The
+console shows the reported traffic by agent.
+
+```csharp
+builder.Services.AddFingerly(options => options.SecretKey = builder.Configuration["Fingerly:SecretKey"]!);
+builder.Services.AddFingerlyAgentSightings(options =>
+{
+    // The same trusted address the proxy uses. Behind a CDN, its header;
+    // otherwise the connection's peer.
+    options.ClientIp = request => request.Header("CF-Connecting-IP") ?? request.RemoteAddress;
+});
+var app = builder.Build();
+app.UseFingerlyAgentSightings(); // first, so it sees every response
+```
+
+By default it reports every response with a `text/html` or
+`application/xhtml+xml` content type, and every request for `/robots.txt`,
+`/llms.txt` and `/llms-full.txt`, whatever its status. Static assets, API
+routes and health checks are left out unless you add them. Change that with
+`ContentTypes` (replaces the default list), `IncludePathPrefixes` and
+`ExcludePathPrefixes` (an exclusion wins). Which responses are reported depends
+on your own path and content type only, never on the user agent or anything
+else the visitor sent.
+
+Ask what sent a request with `Lookup`, and compare against the named values:
+
+```csharp
+app.MapGet("/articles/{id}", (string id, HttpContext context, AgentSightings sightings) =>
+{
+    AgentAnswer answer = sightings.Lookup(context);
+    if (answer.VisitorKind == VisitorKinds.AiBot && answer.Ai?.Purpose == AiPurposes.Training)
+    {
+        // Your own policy for training crawlers.
+    }
+    return Results.Ok(id);
+});
+```
+
+`Lookup` answers from memory only and never throws. Until the server has
+answered for that user agent, address and `Signature-Agent`, or once that
+answer has expired, it returns `AgentAnswer.Unknown` (`IsUnknown` is true, and
+its `VisitorKind` matches none of `VisitorKinds`): serve the request as usual.
+A signed request is checked on every report, so its answer is never
+remembered. The label comes from what the request claims and from the checks
+in `answer.Ai.Verification`; read it as a label, not as proof.
+
+What happens behind it:
+
+- **Never in the way.** The middleware reports in an `OnCompleted` callback,
+  after the response has been sent, and in memory only. A background timer
+  sends the reports, in batches of up to 200, when 200 are pending, when they
+  reach 64 KiB, or 2 seconds after the oldest, one batch at a time, each within
+  5 seconds. The timer does not keep the process alive.
+- **Bounded memory.** At most `Capacity` answers (4096 by default, about
+  1.5 MB; at most 65536, about 25 MB), least recently used first out, and at
+  most 1000 pending requests. Repeats of the same request are sent once with a
+  count. When 1000 are pending, a new request is not reported and
+  `DroppedCount` goes up.
+- **Fail open.** A refused or failed report never reaches a visitor. A rate
+  limit pauses reporting until `Retry-After`; a wrong or revoked key drops the
+  batch and pauses for a minute; an unavailable API is retried with backoff
+  from 1 to 60 seconds; a report that timed out after it was sent is dropped,
+  so nothing is counted twice. Each is logged at most once a minute through
+  `ILogger`.
+- **What is sent.** For each request: the `User-Agent` (a value over 4096
+  bytes is not reported), the address from `ClientIp`, the `Host`, the method,
+  the `Signature`, `Signature-Input` and `Signature-Agent` headers when present,
+  and a count. Never the path, the query string, cookies, `Authorization`,
+  other headers, the body or the response, and none of these is logged.
+- **Shutdown.** Disposing `AgentSightings`, as the host does when it stops,
+  sends what is pending within 5 seconds. Where a process can end without
+  warning, such as a serverless function, call `await sightings.FlushAsync()`
+  before it returns.
+
+Outside ASP.NET Core, build `new AgentSightings(fingerly, options)` once, call
+`sightings.Report(request, responseContentType)` with a `ProxyRequest` after
+each response, and `sightings.Lookup(request)` wherever you need the answer.
+`fingerly.Agents.ReportSightingsAsync` is the single call underneath, for a
+host that batches by itself.
+
 ## Deadlines, limits and connections
 
 `Timeout` bounds the whole exchange, including receiving the body: a server
@@ -643,7 +729,9 @@ in; it also verifies and consumes events, with `VerifyOptions`,
 `NamedValues.cs` hold the named string values. `DeviceCheckService` spends held DeviceCheck tokens, with
 `DeviceCheckBits`, `DeviceCheckWrite` and `DeviceCheckWriteResult`. `Webhooks` verifies signatures. `FingerlyProxy` holds every proxy decision,
 with `ProxyRequest` and `ProxyResponse` as the neutral shapes the hosts
-translate to. `SharedHttp` is the process-wide connection pool and reads every
+translate to. `AgentsService` sends one report of served requests;
+`AgentSightings` batches them and remembers the answers, with `Sighting`
+computing the cache key. `SharedHttp` is the process-wide connection pool and reads every
 answer within its limit. `Keys` validates every caller-supplied option before
 any network access, and `Json` keeps the serializer context in one place so a
 caller's own `JsonSerializerOptions` cannot change how responses are read.
