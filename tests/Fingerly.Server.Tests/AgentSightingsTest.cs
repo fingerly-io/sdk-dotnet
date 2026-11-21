@@ -276,6 +276,20 @@ public class AgentSightingsTest
     }
 
     [Fact]
+    public async Task HoldsATtlToOneDay()
+    {
+        await using TestApi api = await Answering(ttl: 31_536_000);
+        using var harness = new Harness(api.Origin);
+        harness.Sightings.Report(Request(), "text/html");
+        await harness.Sightings.FlushAsync();
+
+        harness.Clock.Advance(86_399_999);
+        Assert.False(harness.Sightings.Lookup(Request()).IsUnknown);
+        harness.Clock.Advance(1);
+        Assert.Same(AgentAnswer.Unknown, harness.Sightings.Lookup(Request()));
+    }
+
+    [Fact]
     public async Task ANewRulesVersionDropsEveryAnswer()
     {
         int call = 0;
@@ -646,6 +660,36 @@ public class AgentSightingsTest
         Assert.Equal(200, harness.Sightings.PendingCount);
     }
 
+    [Fact]
+    public async Task AFlushWaitsABoundedTimeForTheReportInFlight()
+    {
+        var release = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using TestApi api = await Scripted(
+            async context =>
+            {
+                await release.Task;
+                await Ok()(context);
+            },
+            Ok());
+        using var harness = new Harness(api.Origin);
+        harness.Sightings.InFlightWait = TimeSpan.FromMilliseconds(200);
+        harness.Sightings.Report(Request(), "text/html");
+        harness.Clock.Advance(2000);
+        Task ticking = harness.Sightings.TickAsync();
+        await WaitUntil(() => api.Requests.Count == 1);
+
+        // The report in flight outlasts the wait: the flush returns, without throwing.
+        harness.Sightings.Report(Request(ip: "203.0.113.9"), "text/html");
+        Task flushing = harness.Sightings.FlushAsync();
+        Assert.Same(flushing, await Task.WhenAny(flushing, Task.Delay(3000)));
+        await flushing;
+        Assert.Single(api.Requests);
+        Assert.Equal(1, harness.Sightings.PendingCount);
+
+        release.SetResult(true);
+        await ticking;
+    }
+
     // ---- 6 failures -------------------------------------------------------
 
     [Fact]
@@ -739,6 +783,23 @@ public class AgentSightingsTest
         await harness.Sightings.FlushAsync();
 
         Assert.Equal(60_000, harness.Sightings.PausedForMs);
+    }
+
+    [Theory]
+    [InlineData("0", null, 1000)]
+    [InlineData("Thu, 01 Jan 2026 00:00:00 GMT", null, 1000)]
+    [InlineData("-5", null, 60_000)]
+    [InlineData("soon", null, 60_000)]
+    [InlineData("soon", RateLimitScopes.Daily, 43_200_000)]
+    public async Task ARetryAfterOfZeroOrUnreadablePausesAtLeastASecond(string retryAfter, string? scope, long paused)
+    {
+        await using TestApi api = await Scripted(Status(429, retryAfter: retryAfter, scope: scope));
+        using var harness = new Harness(api.Origin);
+        harness.Sightings.Report(Request(), "text/html");
+        await harness.Sightings.FlushAsync();
+
+        Assert.Equal(paused, harness.Sightings.PausedForMs);
+        Assert.Equal(1, harness.Sightings.PendingCount);
     }
 
     [Theory]
@@ -879,6 +940,49 @@ public class AgentSightingsTest
         Assert.Equal(1000, harness.Sightings.PausedForMs);
     }
 
+    [Fact]
+    public async Task AConnectionResetAfterTheRequestWasSentDropsTheBatch()
+    {
+        // The whole request arrived; the server closes the connection without answering.
+        await using TestApi api = await Scripted(context =>
+        {
+            context.Abort();
+            return Task.CompletedTask;
+        });
+        using var harness = new Harness(api.Origin);
+        harness.Sightings.Report(Request(), "text/html");
+
+        await harness.Sightings.FlushAsync();
+
+        Assert.Single(api.Requests);
+        Assert.Equal(0, harness.Sightings.PendingCount);
+        Assert.Equal(0, harness.Sightings.PausedForMs);
+        Assert.Single(harness.Logs);
+    }
+
+    [Fact]
+    public async Task AnAnswerCutShortDropsTheBatch()
+    {
+        await using TestApi api = await Scripted(async context =>
+        {
+            context.Response.StatusCode = 200;
+            context.Response.ContentType = "application/json";
+            context.Response.ContentLength = 1000;
+            await context.Response.WriteAsync("{\"rules_version\":");
+            await context.Response.Body.FlushAsync();
+            context.Abort();
+        });
+        using var harness = new Harness(api.Origin);
+        harness.Sightings.Report(Request(), "text/html");
+
+        await harness.Sightings.FlushAsync();
+
+        Assert.Single(api.Requests);
+        Assert.Equal(0, harness.Sightings.PendingCount);
+        Assert.Equal(0, harness.Sightings.PausedForMs);
+        Assert.Single(harness.Logs);
+    }
+
     /// <summary>Never lets a request leave: the connection is still being opened when the deadline passes.</summary>
     private sealed class StuckConnecting : DelegatingHandler
     {
@@ -988,6 +1092,34 @@ public class AgentSightingsTest
         Assert.False(item.TryGetProperty("signature", out _));
         Assert.False(item.TryGetProperty("signature_agent", out _));
         Assert.Equal("sig1=()", item.GetProperty("signature_input").GetString());
+    }
+
+    [Theory]
+    [InlineData(" ")]
+    [InlineData(" \t ")]
+    public async Task BlankSignatureHeadersAreAbsent(string blank)
+    {
+        await using TestApi api = await Answering(ttl: 0);
+        using var harness = new Harness(api.Origin);
+        ProxyRequest request = Request();
+        request.AddHeader("Signature", blank);
+        request.AddHeader("Signature-Input", blank);
+        request.AddHeader("Signature-Agent", blank);
+
+        Sighting prepared = harness.Sightings.Prepare(request)!;
+        Assert.False(prepared.Signed);
+        Assert.Equal(harness.Sightings.Prepare(Request())!.Key, prepared.Key);
+        // The internal entry point treats an empty value the same way.
+        Sighting empty = Sighting.Prepare("GET", Gptbot, "20.171.206.9", "shop.example", "", "", "")!;
+        Assert.False(empty.Signed);
+        Assert.Equal(prepared.Key, empty.Key);
+
+        harness.Sightings.Report(request, "text/html");
+        await harness.Sightings.FlushAsync();
+        JsonElement item = Items(Assert.Single(api.Requests)).Single();
+        Assert.False(item.TryGetProperty("signature", out _));
+        Assert.False(item.TryGetProperty("signature_input", out _));
+        Assert.False(item.TryGetProperty("signature_agent", out _));
     }
 
     [Fact]

@@ -143,12 +143,15 @@ internal static class SharedHttp
 /// A deadline that expires before the body was asked for means the request
 /// never left (the connection was still being opened); one that expires after
 /// means the server may have acted on it. Retrying only the first kind is what
-/// keeps a report from being counted twice.
+/// keeps a report from being counted twice. It also records when the whole
+/// body was written and flushed to the connection, after which a closed or
+/// reset connection may likewise follow a request the server acted on.
 /// </remarks>
 internal sealed class TrackedJsonContent : HttpContent
 {
     private readonly byte[] _json;
     private int _started;
+    private int _written;
 
     internal TrackedJsonContent(byte[] json)
     {
@@ -159,10 +162,20 @@ internal sealed class TrackedJsonContent : HttpContent
     /// <summary>True once the handler began writing the body.</summary>
     internal bool Started => Volatile.Read(ref _started) == 1;
 
-    protected override Task SerializeToStreamAsync(Stream stream, TransportContext? context)
+    /// <summary>
+    /// True once the whole body was written and flushed to the connection:
+    /// the server may have received the full request.
+    /// </summary>
+    internal bool Written => Volatile.Read(ref _written) == 1;
+
+    protected override async Task SerializeToStreamAsync(Stream stream, TransportContext? context)
     {
         Volatile.Write(ref _started, 1);
-        return stream.WriteAsync(_json, 0, _json.Length);
+        await stream.WriteAsync(_json, 0, _json.Length).ConfigureAwait(false);
+        // The handler buffers what it is given; flushing here means the
+        // request has left the process once this completes.
+        await stream.FlushAsync().ConfigureAwait(false);
+        Volatile.Write(ref _written, 1);
     }
 
     protected override bool TryComputeLength(out long length)

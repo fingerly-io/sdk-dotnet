@@ -60,7 +60,7 @@ public sealed class AgentSightings : IDisposable
     private const long AuthPauseMs = 60_000;
     private const long LogEveryMs = 60_000;
     private const long MaxBackoffMs = 60_000;
-    private const long MaxTtlSeconds = 366L * 24 * 3600;
+    private const long MaxTtlSeconds = 86_400;
 
     private static readonly string[] WellKnownPaths = ["/robots.txt", "/llms.txt", "/llms-full.txt"];
     private static readonly string[] DefaultContentTypes = ["text/html", "application/xhtml+xml"];
@@ -272,19 +272,28 @@ public sealed class AgentSightings : IDisposable
     /// <summary>
     /// Sends the pending requests, in reports of up to 200, until none is
     /// left, reporting pauses after a refusal or failure, or a report is
-    /// dropped. Waits for a report already in flight first.
+    /// dropped. Waits for a report already in flight first, for at most six
+    /// seconds; when that one is still running, returns without sending.
     /// </summary>
     /// <remarks>
     /// The background timer does this by itself. Call it where a process may
     /// end without warning, such as before a serverless invocation returns.
-    /// Failures are handled as the timer handles them, and never thrown.
+    /// Failures are handled as the timer handles them, and never thrown. The
+    /// one exception is your own cancellation: when
+    /// <paramref name="cancellationToken"/> is cancelled, it throws
+    /// <see cref="OperationCanceledException"/>, as any .NET call does.
     /// </remarks>
     /// <param name="cancellationToken">Stops waiting; a report already sent is not retried.</param>
     /// <returns>A task that completes when the pending requests were sent or kept.</returns>
-    /// <exception cref="OperationCanceledException"><paramref name="cancellationToken"/> was cancelled.</exception>
+    /// <exception cref="OperationCanceledException">
+    /// <paramref name="cancellationToken"/> was cancelled. Nothing else is thrown.
+    /// </exception>
     public async Task FlushAsync(CancellationToken cancellationToken = default)
     {
-        await _flushing.WaitAsync(cancellationToken).ConfigureAwait(false);
+        if (!await _flushing.WaitAsync(InFlightWait, cancellationToken).ConfigureAwait(false))
+        {
+            return;
+        }
         try
         {
             while (await SendBatchAsync(cancellationToken).ConfigureAwait(false) == Outcome.Sent)
@@ -344,6 +353,12 @@ public sealed class AgentSightings : IDisposable
 
     /// <summary>The deadline for one report, and for the last one at shutdown; tests shorten it.</summary>
     internal TimeSpan ReportDeadline { get; set; } = Deadline;
+
+    /// <summary>
+    /// How long <see cref="FlushAsync"/> waits for a report already in flight:
+    /// its deadline and a second of margin. Tests shorten it.
+    /// </summary>
+    internal TimeSpan InFlightWait { get; set; } = Deadline + TimeSpan.FromSeconds(1);
 
     /// <summary>Requests pending, for tests.</summary>
     internal int PendingCount
@@ -646,6 +661,15 @@ public sealed class AgentSightings : IDisposable
         }
         catch (FingerlyConnectionException)
         {
+            // HttpClient raises the same error for a connection that failed
+            // before the request left and for one closed or reset after it,
+            // or for an answer cut short. The body tells them apart: once it
+            // was written and flushed, the server may have counted it.
+            if (body.Written)
+            {
+                LogThrottled("lost", "the connection closed after a report was sent; it was dropped");
+                return Outcome.Dropped;
+            }
             Keep(batch, backoff: true);
             return Outcome.Kept;
         }

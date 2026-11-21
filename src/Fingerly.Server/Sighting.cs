@@ -63,8 +63,9 @@ internal sealed class Sighting
     /// agent over the limit, or an address that is not one IP literal.
     /// </summary>
     /// <remarks>
-    /// A signature header over the limit counts as absent, before the key and
-    /// <see cref="Signed"/> are worked out. The <c>Host</c> is kept as received.
+    /// A signature header that is empty, whitespace only or over the limit
+    /// counts as absent, before the key and <see cref="Signed"/> are worked
+    /// out. The <c>Host</c> is kept as received.
     /// </remarks>
     internal static Sighting? Prepare(
         string method, string? userAgent, string? clientIp, string? host,
@@ -204,8 +205,9 @@ internal sealed class Sighting
         Count = count,
     };
 
+    /// <summary>The header, or null when it is empty, whitespace only, or over the limit.</summary>
     private static string? WithinLimit(string? value) =>
-        value is not null && Bytes(value) > MaxHeaderBytes ? null : value;
+        string.IsNullOrWhiteSpace(value) || Bytes(value) > MaxHeaderBytes ? null : value;
 
     private static int Bytes(string? value) => value is null ? 0 : Encoding.UTF8.GetByteCount(value);
 }
