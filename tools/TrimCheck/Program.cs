@@ -47,6 +47,15 @@ request.AddHeader("X-API-Key", "fly_pk_production_trimcheck");
 request.AddHeader("Origin", "https://shop.example");
 Console.WriteLine((await proxy.HandleAsync(request)).Status);
 
+await using (var sightings = new AgentSightings(fingerly, new AgentSightingsOptions { ClientIp = _ => "203.0.113.7" }))
+{
+    var served = new ProxyRequest("GET", "/");
+    served.AddHeader("User-Agent", "GPTBot/1.4");
+    sightings.Report(served, "text/html");
+    await sightings.FlushAsync();
+    Console.WriteLine(sightings.Lookup(served).IsUnknown);
+}
+
 Console.WriteLine("trim check ok");
 
 static async System.Threading.Tasks.Task Expect<T>(Func<System.Threading.Tasks.Task> call)
