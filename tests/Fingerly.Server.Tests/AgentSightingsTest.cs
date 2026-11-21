@@ -319,21 +319,23 @@ public class AgentSightingsTest
     [Theory]
     [InlineData(0)]
     [InlineData(-1)]
-    [InlineData(AgentSightingsOptions.MaxCapacity + 1)]
-    public void RefusesACapacityOutOfRange(int capacity)
+    public void RefusesACapacityBelowOne(int capacity)
     {
         using var client = new FingerlyClient(SecretKey);
         Assert.Throws<ArgumentOutOfRangeException>(() => new AgentSightings(
             client, new AgentSightingsOptions { ClientIp = _ => "203.0.113.7", Capacity = capacity }));
     }
 
-    [Fact]
-    public void AcceptsTheLargestCapacity()
+    [Theory]
+    [InlineData(AgentSightingsOptions.MaxCapacity, AgentSightingsOptions.MaxCapacity)]
+    [InlineData(AgentSightingsOptions.MaxCapacity + 1, AgentSightingsOptions.MaxCapacity)]
+    [InlineData(int.MaxValue, AgentSightingsOptions.MaxCapacity)]
+    public void HoldsACapacityAboveTheMaximumToIt(int capacity, int held)
     {
         using var client = new FingerlyClient(SecretKey);
         using var sightings = new AgentSightings(
-            client, new AgentSightingsOptions { ClientIp = _ => "203.0.113.7", Capacity = AgentSightingsOptions.MaxCapacity });
-        Assert.Equal(0, sightings.DroppedCount);
+            client, new AgentSightingsOptions { ClientIp = _ => "203.0.113.7", Capacity = capacity });
+        Assert.Equal("AgentSightings { Capacity = " + held + " }", sightings.ToString());
     }
 
     [Fact]
@@ -473,22 +475,22 @@ public class AgentSightingsTest
     {
         await using TestApi api = await Answering();
         using var harness = new Harness(api.Origin);
-        string longAgent = new('a', 4000);
+        string longAgent = new('a', 4060);
 
-        // About 4.1 KB each, so the sixteenth passes 64 KiB.
-        for (int i = 0; i < 15; i++)
+        // Each item's fields are 4088 bytes (user agent 4062, address 11,
+        // host 12, method 3): sixteen are 65408, under 64 KiB; seventeen pass it.
+        for (int i = 0; i < 16; i++)
         {
-            harness.Sightings.Report(Request(userAgent: longAgent + i, ip: "203.0.113.9"), "text/html");
+            harness.Sightings.Report(Request(userAgent: longAgent + i.ToString("D2"), ip: "203.0.113.9"), "text/html");
         }
         await harness.Sightings.TickAsync();
         Assert.Empty(api.Requests);
 
-        harness.Sightings.Report(Request(userAgent: longAgent + 15, ip: "203.0.113.9"), "text/html");
+        harness.Sightings.Report(Request(userAgent: longAgent + "16", ip: "203.0.113.9"), "text/html");
         await WaitUntil(() => api.Requests.Count == 1 && harness.Sightings.PendingCount == 1);
 
-        // One report stays within 64 KiB, so the sixteenth waits for the next.
-        Assert.Equal(15, Items(api.Requests[0]).Length);
-        Assert.True(api.Requests[0].Body.Length <= 64 * 1024);
+        // One report stays within 64 KiB of fields, so the seventeenth waits for the next.
+        Assert.Equal(16, Items(api.Requests[0]).Length);
     }
 
     [Fact]
@@ -588,6 +590,62 @@ public class AgentSightingsTest
         Assert.True(harness.Sightings.Lookup(Request(ip: "10.3.4.99")).IsUnknown);
     }
 
+    [Fact]
+    public async Task RequestsInFlightCountAgainstTheBufferLimit()
+    {
+        var release = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using TestApi api = await Scripted(
+            async context =>
+            {
+                await release.Task;
+                await Status(503)(context);
+            },
+            Ok());
+        using var harness = new Harness(api.Origin);
+        for (int i = 0; i < 200; i++)
+        {
+            harness.Sightings.Report(Request(ip: "10.4." + (i / 250) + "." + (i % 250)), "text/html");
+        }
+        await WaitUntil(() => api.Requests.Count == 1);
+
+        for (int i = 0; i < 900; i++)
+        {
+            harness.Sightings.Report(Request(ip: "10.5." + (i / 250) + "." + (i % 250)), "text/html");
+        }
+        Assert.Equal(800, harness.Sightings.PendingCount);
+        Assert.Equal(100, harness.Sightings.DroppedCount);
+
+        // The kept report always fits back, oldest first.
+        release.SetResult(true);
+        await WaitUntil(() => harness.Sightings.PendingCount == 1000);
+        Assert.Equal(100, harness.Sightings.DroppedCount);
+    }
+
+    [Fact]
+    public async Task AFlushStopsAtADroppedReport()
+    {
+        var release = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using TestApi api = await TestApi.StartAsync(async context =>
+        {
+            await release.Task;
+            await Status(500)(context);
+        });
+        using var harness = new Harness(api.Origin);
+        for (int i = 0; i < 600; i++)
+        {
+            harness.Sightings.Report(Request(ip: "10.6." + (i / 250) + "." + (i % 250)), "text/html");
+        }
+        await WaitUntil(() => api.Requests.Count == 1);
+
+        // Waits for the report in flight, then sends one more, which is dropped too.
+        Task flushing = harness.Sightings.FlushAsync();
+        release.SetResult(true);
+        await flushing;
+
+        Assert.Equal(2, api.Requests.Count);
+        Assert.Equal(200, harness.Sightings.PendingCount);
+    }
+
     // ---- 6 failures -------------------------------------------------------
 
     [Fact]
@@ -613,16 +671,24 @@ public class AgentSightingsTest
         Assert.All(harness.Logs, line => Assert.DoesNotContain("203.0.113", line));
     }
 
-    [Fact]
-    public async Task AnotherClientErrorIsDroppedLikeAnInvalidRequest()
+    [Theory]
+    [InlineData(400)]
+    [InlineData(404)]
+    [InlineData(413)]
+    [InlineData(500)]
+    [InlineData(502)]
+    [InlineData(504)]
+    public async Task AnyOtherStatusIsDroppedAndLogged(int status)
     {
-        await using TestApi api = await Scripted(Status(404));
+        await using TestApi api = await Scripted(Status(status));
         using var harness = new Harness(api.Origin);
         harness.Sightings.Report(Request(), "text/html");
         await harness.Sightings.FlushAsync();
 
+        Assert.Single(api.Requests);
         Assert.Equal(0, harness.Sightings.PendingCount);
         Assert.Equal(0, harness.Sightings.PausedForMs);
+        Assert.Single(harness.Logs);
     }
 
     [Fact]
@@ -680,7 +746,7 @@ public class AgentSightingsTest
     [InlineData(403)]
     public async Task AWrongKeyDropsTheBatchAndPausesAMinute(int status)
     {
-        await using TestApi api = await Scripted(Status(status), Status(status), Ok(), Status(status));
+        await using TestApi api = await Scripted(Status(status));
         using var harness = new Harness(api.Origin);
 
         harness.Sightings.Report(Request(ip: "203.0.113.1"), "text/html");
@@ -689,17 +755,17 @@ public class AgentSightingsTest
         Assert.Equal(60_000, harness.Sightings.PausedForMs);
         Assert.Single(harness.Logs);
 
-        harness.Clock.Advance(60_000);
+        // Nothing is sent during the pause; requests keep counting.
         harness.Sightings.Report(Request(ip: "203.0.113.2"), "text/html");
+        harness.Clock.Advance(59_999);
         await harness.Sightings.FlushAsync();
-        Assert.Single(harness.Logs);
+        Assert.Single(api.Requests);
+        Assert.Equal(1, harness.Sightings.PendingCount);
 
-        // A success re-arms the message.
-        harness.Clock.Advance(60_000);
-        harness.Sightings.Report(Request(ip: "203.0.113.3"), "text/html");
+        // Once a minute, the refusal is logged again.
+        harness.Clock.Advance(1);
         await harness.Sightings.FlushAsync();
-        harness.Sightings.Report(Request(ip: "203.0.113.4"), "text/html");
-        await harness.Sightings.FlushAsync();
+        Assert.Equal(2, api.Requests.Count);
         Assert.Equal(2, harness.Logs.Count);
         Assert.All(harness.Logs, line => Assert.DoesNotContain(SecretKey, line));
     }
@@ -708,7 +774,7 @@ public class AgentSightingsTest
     public async Task UnavailableKeepsTheBatchAndBacksOffExponentially()
     {
         await using TestApi api = await Scripted(
-            Status(503), Status(503), Status(500), Ok(), Status(503));
+            Status(503), Status(503), Status(503), Ok(), Status(503));
         using var harness = new Harness(api.Origin);
         harness.Sightings.Report(Request(), "text/html");
 
@@ -776,6 +842,24 @@ public class AgentSightingsTest
         harness.Clock.Advance(1000);
         await harness.Sightings.FlushAsync();
         Assert.Equal(3, Items(api.Requests[1]).Single().GetProperty("count").GetInt64());
+    }
+
+    [Fact]
+    public async Task AKeptBatchKeepsItsFirstSeenTime()
+    {
+        await using TestApi api = await Scripted(Status(503), Ok());
+        using var harness = new Harness(api.Origin);
+        harness.Sightings.Report(Request(), "text/html");
+        harness.Clock.Advance(1500);
+        await harness.Sightings.FlushAsync();
+        Assert.Equal(1000, harness.Sightings.PausedForMs);
+
+        // 2.5 s after it was first seen, the timer finds it due at once.
+        harness.Clock.Advance(1000);
+        await harness.Sightings.TickAsync();
+
+        Assert.Equal(2, api.Requests.Count);
+        Assert.Equal(0, harness.Sightings.PendingCount);
     }
 
     [Fact]
@@ -882,7 +966,7 @@ public class AgentSightingsTest
     }
 
     [Fact]
-    public async Task OversizeSignatureHeadersAndHostAreLeftOut()
+    public async Task OversizeSignatureHeadersAreLeftOutAndTheHostIsSentAsReceived()
     {
         await using TestApi api = await Answering(ttl: 0);
         using var harness = new Harness(api.Origin);
@@ -900,7 +984,7 @@ public class AgentSightingsTest
         harness.Sightings.Report(request, "text/html");
         await harness.Sightings.FlushAsync();
         JsonElement item = Items(Assert.Single(api.Requests)).Single();
-        Assert.False(item.TryGetProperty("host", out _));
+        Assert.Equal(huge, item.GetProperty("host").GetString());
         Assert.False(item.TryGetProperty("signature", out _));
         Assert.False(item.TryGetProperty("signature_agent", out _));
         Assert.Equal("sig1=()", item.GetProperty("signature_input").GetString());
@@ -939,6 +1023,25 @@ public class AgentSightingsTest
         Assert.Equal(0, harness.Sightings.PendingCount);
         Assert.Same(AgentAnswer.Unknown, harness.Sightings.Lookup(Request()));
         Assert.Single(harness.Logs);
+
+        // At most once a minute.
+        harness.Clock.Advance(60_000);
+        harness.Sightings.Report(Request(), "text/html");
+        Assert.Equal(2, harness.Logs.Count);
+        Assert.All(harness.Logs, line => Assert.DoesNotContain("20.171.206.9", line));
+    }
+
+    [Fact]
+    public async Task AnAbsentHostIsLeftOutAndCountIsAlwaysSent()
+    {
+        await using TestApi api = await Answering();
+        using var harness = new Harness(api.Origin);
+        harness.Sightings.Report(Request(host: null), "text/html");
+        await harness.Sightings.FlushAsync();
+
+        JsonElement item = Items(Assert.Single(api.Requests)).Single();
+        Assert.False(item.TryGetProperty("host", out _));
+        Assert.Equal(1, item.GetProperty("count").GetInt64());
     }
 
     [Fact]

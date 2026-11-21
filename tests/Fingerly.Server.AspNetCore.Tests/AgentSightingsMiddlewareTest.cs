@@ -168,7 +168,7 @@ public class AgentSightingsMiddlewareTest
         {
             Assert.Equal("<p>hi</p>", await page.Content.ReadAsStringAsync());
         }
-        // A 500 keeps the request and backs off; it stays pending, unanswered.
+        // A 500 drops the report; the request stays unanswered.
         await WaitUntil(() => api.Requests.Count >= 1 || sightings.PendingCount == 1);
         await sightings.FlushAsync();
         await WaitUntil(() => api.Requests.Count >= 1);

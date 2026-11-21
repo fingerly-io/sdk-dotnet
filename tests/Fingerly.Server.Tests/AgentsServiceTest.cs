@@ -169,11 +169,11 @@ public class AgentsServiceTest
     public void UnknownMatchesNoVisitorKind()
     {
         Assert.True(AgentAnswer.Unknown.IsUnknown);
-        Assert.Equal("unknown", AgentAnswer.Unknown.VisitorKind);
+        Assert.Equal("", AgentAnswer.Unknown.VisitorKind);
         Assert.Equal(0, AgentAnswer.Unknown.Ttl);
         Assert.Null(AgentAnswer.Unknown.Agent);
         Assert.Null(AgentAnswer.Unknown.Ai);
-        Assert.False(new AgentAnswer { VisitorKind = "unknown" }.IsUnknown);
+        Assert.False(new AgentAnswer().IsUnknown);
         Assert.DoesNotContain(AgentAnswer.Unknown.VisitorKind, new[]
         {
             VisitorKinds.Human, VisitorKinds.AiBot, VisitorKinds.Automation, VisitorKinds.SearchCrawler,

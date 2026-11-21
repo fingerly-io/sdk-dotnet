@@ -21,7 +21,7 @@ namespace Fingerly;
 /// </para>
 /// <para>
 /// Memory is bounded: at most <see cref="AgentSightingsOptions.Capacity"/>
-/// answers (4096 by default, about 1.5 MB) and 1000 pending requests. Every
+/// answers (4096 by default, about 1.5 MB) and 1000 pending or in-flight requests. Every
 /// failure fails open: requests are served as usual and <see cref="Lookup"/>
 /// answers <see cref="AgentAnswer.Unknown"/>.
 /// </para>
@@ -87,12 +87,11 @@ public sealed class AgentSightings : IDisposable
     private readonly LinkedList<Pending> _pending = new();
     private readonly Dictionary<string, LinkedListNode<Pending>> _folded = new(StringComparer.Ordinal);
     private long _pendingBytes;
+    private int _inFlight;
 
     private long _pausedUntil;
     private int _backoffSteps;
-    private bool _authLogged;
     private readonly Dictionary<string, long> _lastLogged = new(StringComparer.Ordinal);
-    private int _clientIpLogged;
     private int _signalled;
     private long _dropped;
     private int _disposed;
@@ -108,7 +107,7 @@ public sealed class AgentSightings : IDisposable
     /// <param name="options">The settings; <see cref="AgentSightingsOptions.ClientIp"/> is required.</param>
     /// <exception cref="ArgumentNullException">An argument is null.</exception>
     /// <exception cref="ArgumentException">ClientIp is missing, or a content type or path prefix is invalid.</exception>
-    /// <exception cref="ArgumentOutOfRangeException">The capacity is below 1 or above <see cref="AgentSightingsOptions.MaxCapacity"/>.</exception>
+    /// <exception cref="ArgumentOutOfRangeException">The capacity is below 1. One above <see cref="AgentSightingsOptions.MaxCapacity"/> is held to it.</exception>
     public AgentSightings(FingerlyClient client, AgentSightingsOptions options)
         : this(client, options, ownsClient: false, fallbackLog: null, now: null, utcNow: null, startTimer: true)
     {
@@ -129,21 +128,21 @@ public sealed class AgentSightings : IDisposable
             throw new ArgumentNullException(nameof(options));
         }
         _clientIp = options.ClientIp ?? throw new ArgumentException("ClientIp is required", nameof(options));
-        if (options.Capacity < 1 || options.Capacity > AgentSightingsOptions.MaxCapacity)
+        if (options.Capacity < 1)
         {
             throw new ArgumentOutOfRangeException(
-                nameof(options), options.Capacity,
-                "Capacity must be between 1 and " + AgentSightingsOptions.MaxCapacity);
+                nameof(options), options.Capacity, "Capacity must be at least 1");
         }
-        _capacity = options.Capacity;
-        _contentTypes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        // Above the hard maximum is held to it rather than refused.
+        _capacity = Math.Min(options.Capacity, AgentSightingsOptions.MaxCapacity);
+        _contentTypes = new HashSet<string>(StringComparer.Ordinal);
         foreach (string? type in options.ContentTypes ?? DefaultContentTypes)
         {
             if (string.IsNullOrWhiteSpace(type) || type!.IndexOf(';') >= 0)
             {
                 throw new ArgumentException("A content type is a media type such as text/html", nameof(options));
             }
-            _contentTypes.Add(type.Trim());
+            _contentTypes.Add(type.Trim().ToLowerInvariant());
         }
         _include = Prefixes(options.IncludePathPrefixes, nameof(options));
         _exclude = Prefixes(options.ExcludePathPrefixes, nameof(options));
@@ -164,8 +163,8 @@ public sealed class AgentSightings : IDisposable
     }
 
     /// <summary>
-    /// How many requests were not reported because 1000 were already pending,
-    /// since this instance was built.
+    /// How many requests were not reported because 1000 were already pending
+    /// or in flight, since this instance was built.
     /// </summary>
     public long DroppedCount => Interlocked.Read(ref _dropped);
 
@@ -208,7 +207,7 @@ public sealed class AgentSightings : IDisposable
         }
         int parameters = responseContentType!.IndexOf(';');
         string media = (parameters >= 0 ? responseContentType.Substring(0, parameters) : responseContentType).Trim();
-        return _contentTypes.Contains(media);
+        return _contentTypes.Contains(media.ToLowerInvariant());
     }
 
     /// <summary>
@@ -271,8 +270,9 @@ public sealed class AgentSightings : IDisposable
     }
 
     /// <summary>
-    /// Sends every request pending now, in reports of up to 200, unless
-    /// reporting is paused after a refusal or failure.
+    /// Sends the pending requests, in reports of up to 200, until none is
+    /// left, reporting pauses after a refusal or failure, or a report is
+    /// dropped. Waits for a report already in flight first.
     /// </summary>
     /// <remarks>
     /// The background timer does this by itself. Call it where a process may
@@ -287,19 +287,8 @@ public sealed class AgentSightings : IDisposable
         await _flushing.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            int remaining;
-            lock (_gate)
+            while (await SendBatchAsync(cancellationToken).ConfigureAwait(false) == Outcome.Sent)
             {
-                remaining = _pending.Count;
-            }
-            while (remaining > 0)
-            {
-                int sent = await SendBatchAsync(cancellationToken).ConfigureAwait(false);
-                if (sent == 0)
-                {
-                    return;
-                }
-                remaining -= sent;
             }
         }
         finally
@@ -417,10 +406,7 @@ public sealed class AgentSightings : IDisposable
         }
         if (Sighting.CanonicalIp(address) is null)
         {
-            if (Interlocked.Exchange(ref _clientIpLogged, 1) == 0)
-            {
-                Log(FingerlyProxy.NoClientIp + "; those requests are not reported");
-            }
+            LogThrottled("client-ip", FingerlyProxy.NoClientIp + "; those requests are not reported");
             return null;
         }
         return Sighting.Prepare(
@@ -471,8 +457,10 @@ public sealed class AgentSightings : IDisposable
             {
                 existing.Value.Count = Math.Min(MaxCount, existing.Value.Count + 1);
             }
-            else if (_pending.Count >= BufferLimit)
+            else if (_pending.Count + _inFlight >= BufferLimit)
             {
+                // The requests of a report in flight count too, so a kept
+                // report always fits back.
                 Interlocked.Increment(ref _dropped);
                 return;
             }
@@ -511,7 +499,7 @@ public sealed class AgentSightings : IDisposable
         {
             while (Due())
             {
-                if (await SendBatchAsync(CancellationToken.None).ConfigureAwait(false) == 0)
+                if (await SendBatchAsync(CancellationToken.None).ConfigureAwait(false) != Outcome.Sent)
                 {
                     return;
                 }
@@ -549,19 +537,55 @@ public sealed class AgentSightings : IDisposable
         }
     }
 
+    /// <summary>What became of one report.</summary>
+    private enum Outcome
+    {
+        /// <summary>Nothing was sent: nothing pending, or reporting is paused.</summary>
+        Idle,
+
+        /// <summary>The server answered and the answers are remembered.</summary>
+        Sent,
+
+        /// <summary>The report is back in the buffer, and reporting paused.</summary>
+        Kept,
+
+        /// <summary>The report was dropped after a failure.</summary>
+        Dropped,
+    }
+
     /// <summary>
-    /// Sends the oldest pending requests, up to 200 and about 64 KiB, and
-    /// applies the answer. The caller holds <see cref="_flushing"/>.
+    /// Sends the oldest pending requests, up to 200 and 64 KiB, and applies
+    /// the answer. The caller holds <see cref="_flushing"/>.
     /// </summary>
-    /// <returns>How many requests left the buffer, or 0 when nothing was sent.</returns>
-    private async Task<int> SendBatchAsync(CancellationToken cancellationToken)
+    private async Task<Outcome> SendBatchAsync(CancellationToken cancellationToken)
+    {
+        List<Pending> batch = Take();
+        if (batch.Count == 0)
+        {
+            return Outcome.Idle;
+        }
+        try
+        {
+            return await SendAsync(batch, cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            lock (_gate)
+            {
+                _inFlight = 0;
+            }
+        }
+    }
+
+    /// <summary>Moves the oldest pending requests in flight, unless paused.</summary>
+    private List<Pending> Take()
     {
         var batch = new List<Pending>();
         lock (_gate)
         {
             if (_now() < _pausedUntil)
             {
-                return 0;
+                return batch;
             }
             long bytes = 0;
             for (LinkedListNode<Pending>? node = _pending.First; node is not null && batch.Count < FlushItems;)
@@ -577,12 +601,13 @@ public sealed class AgentSightings : IDisposable
                 bytes += size;
                 node = next;
             }
+            _inFlight = batch.Count;
         }
-        if (batch.Count == 0)
-        {
-            return 0;
-        }
+        return batch;
+    }
 
+    private async Task<Outcome> SendAsync(List<Pending> batch, CancellationToken cancellationToken)
+    {
         var items = new List<AgentSighting>(batch.Count);
         foreach (Pending pending in batch)
         {
@@ -605,46 +630,44 @@ public sealed class AgentSightings : IDisposable
         }
         catch (FingerlyApiException refused)
         {
-            Refused(refused, batch);
-            return batch.Count;
+            return Refused(refused, batch);
         }
         catch (FingerlyTimeoutException)
         {
-            if (body.Started)
+            if (!body.Started)
             {
-                // The server may have counted it; a retry would count it twice.
-                LogThrottled("timeout", "a report got no answer within 5 s and was dropped");
-            }
-            else
-            {
+                // The connection was still being opened: nothing left.
                 Keep(batch, backoff: true);
+                return Outcome.Kept;
             }
-            return batch.Count;
+            // The server may have counted it; a retry would count it twice.
+            LogThrottled("timeout", "a report got no answer within 5 s and was dropped");
+            return Outcome.Dropped;
         }
         catch (FingerlyConnectionException)
         {
             Keep(batch, backoff: true);
-            return batch.Count;
+            return Outcome.Kept;
         }
 #pragma warning disable CA1031 // An unreadable answer is dropped, as a refused one is.
         catch (Exception)
 #pragma warning restore CA1031
         {
             LogThrottled("answer", "the API answered a report with a body this SDK cannot read; it was dropped");
-            return batch.Count;
+            return Outcome.Dropped;
         }
 
         if (result.Items.Count != batch.Count)
         {
             LogThrottled("answer", "the API answered a report with a body this SDK cannot read; it was dropped");
-            return batch.Count;
+            return Outcome.Dropped;
         }
         Store(result, batch);
-        return batch.Count;
+        return Outcome.Sent;
     }
 
     /// <summary>Applies an error answer per the failure table.</summary>
-    private void Refused(FingerlyApiException refused, List<Pending> batch)
+    private Outcome Refused(FingerlyApiException refused, List<Pending> batch)
     {
         int status = refused.Status;
         if (status == 429)
@@ -657,29 +680,27 @@ public sealed class AgentSightings : IDisposable
                 _pausedUntil = _now() + (Math.Max(1, seconds) * 1000);
             }
             LogThrottled("429", "reports are rate limited; requests are served unchecked until the limit resets");
+            return Outcome.Kept;
         }
-        else if (status == 401 || status == 403)
+        if (status == 503)
         {
-            bool first;
+            Keep(batch, backoff: true);
+            return Outcome.Kept;
+        }
+        if (status == 401 || status == 403)
+        {
             lock (_gate)
             {
                 _pausedUntil = _now() + AuthPauseMs;
-                first = !_authLogged;
-                _authLogged = true;
             }
-            if (first)
-            {
-                Log("the API refused the secret key (HTTP " + status + "); the key is wrong or revoked");
-            }
+            LogThrottled("auth", "the API refused the secret key (HTTP " + status + "); the key is wrong or revoked");
+            return Outcome.Dropped;
         }
-        else if (status >= 500)
-        {
-            Keep(batch, backoff: true);
-        }
-        else
-        {
-            LogThrottled("invalid", "the API refused a report as invalid (HTTP " + status + "); it was dropped");
-        }
+        // 422 is an SDK bug, and so is any other answer the table does not
+        // name (500, 502, 504, 413, other 4xx): the server may have acted on
+        // part of it, so it is never retried.
+        LogThrottled("refused", "the API refused a report (HTTP " + status + "); it was dropped");
+        return Outcome.Dropped;
     }
 
     /// <summary>Remembers every answer with a positive ttl, after a rules change clears the rest.</summary>
@@ -688,7 +709,6 @@ public sealed class AgentSightings : IDisposable
         lock (_gate)
         {
             _backoffSteps = 0;
-            _authLogged = false;
             if (_rulesVersion is not null && !string.Equals(_rulesVersion, result.RulesVersion, StringComparison.Ordinal))
             {
                 _cache.Clear();
@@ -741,6 +761,9 @@ public sealed class AgentSightings : IDisposable
     /// </summary>
     private void MergeBack(List<Pending> batch)
     {
+        // The batch counted against the buffer limit while in flight, so it
+        // always fits back; each item keeps its first-seen time.
+        _inFlight = 0;
         for (int i = batch.Count - 1; i >= 0; i--)
         {
             Pending kept = batch[i];
@@ -748,11 +771,6 @@ public sealed class AgentSightings : IDisposable
             {
                 kept.Count = Math.Min(MaxCount, kept.Count + newer.Value.Count);
                 RemovePending(newer);
-            }
-            else if (_pending.Count >= BufferLimit)
-            {
-                Interlocked.Increment(ref _dropped);
-                continue;
             }
             LinkedListNode<Pending> node = _pending.AddFirst(kept);
             if (!kept.Sighting.Signed)

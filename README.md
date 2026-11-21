@@ -615,7 +615,8 @@ app.MapGet("/articles/{id}", (string id, HttpContext context, AgentSightings sig
 `Lookup` answers from memory only and never throws. Until the server has
 answered for that user agent, address and `Signature-Agent`, or once that
 answer has expired, it returns `AgentAnswer.Unknown` (`IsUnknown` is true, and
-its `VisitorKind` matches none of `VisitorKinds`): serve the request as usual.
+its `VisitorKind` is empty, so it matches none of `VisitorKinds`): serve the
+request as usual.
 A signed request is checked on every report, so its answer is never
 remembered. The label comes from what the request claims and from the checks
 in `answer.Ai.Verification`; read it as a label, not as proof.
@@ -628,16 +629,17 @@ What happens behind it:
   reach 64 KiB, or 2 seconds after the oldest, one batch at a time, each within
   5 seconds. The timer does not keep the process alive.
 - **Bounded memory.** At most `Capacity` answers (4096 by default, about
-  1.5 MB; at most 65536, about 25 MB), least recently used first out, and at
-  most 1000 pending requests. Repeats of the same request are sent once with a
-  count. When 1000 are pending, a new request is not reported and
-  `DroppedCount` goes up.
+  1.5 MB; a larger value is held to 65536, about 25 MB), least recently used
+  first out, and at most 1000 requests pending or in flight. Repeats of the
+  same request are sent once with a count. When 1000 are held, a new request
+  is not reported and `DroppedCount` goes up.
 - **Fail open.** A refused or failed report never reaches a visitor. A rate
   limit pauses reporting until `Retry-After`; a wrong or revoked key drops the
-  batch and pauses for a minute; an unavailable API is retried with backoff
-  from 1 to 60 seconds; a report that timed out after it was sent is dropped,
-  so nothing is counted twice. Each is logged at most once a minute through
-  `ILogger`.
+  batch and pauses for a minute; a `503` or an API that cannot be reached is
+  retried with backoff from 1 to 60 seconds; any other refusal, and a report
+  that timed out after it was sent, is dropped, so nothing is counted twice.
+  Each is logged at most once a minute through `ILogger`, and so is a
+  `ClientIp` that gave no single address.
 - **What is sent.** For each request: the `User-Agent` (a value over 4096
   bytes is not reported), the address from `ClientIp`, the `Host`, the method,
   the `Signature`, `Signature-Input` and `Signature-Agent` headers when present,

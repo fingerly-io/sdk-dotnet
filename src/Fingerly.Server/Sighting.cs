@@ -16,9 +16,6 @@ internal sealed class Sighting
     /// <summary>The largest header value the API accepts, in UTF-8 bytes.</summary>
     internal const int MaxHeaderBytes = 4096;
 
-    /// <summary>A rough per-item cost in the JSON body beyond its field values.</summary>
-    internal const int ItemOverheadBytes = 100;
-
     private Sighting(
         string key, string userAgent, string clientIp, string? host, string method,
         string? signature, string? signatureInput, string? signatureAgent)
@@ -31,7 +28,7 @@ internal sealed class Sighting
         Signature = signature;
         SignatureInput = signatureInput;
         SignatureAgent = signatureAgent;
-        EstimatedBytes = ItemOverheadBytes + Bytes(userAgent) + Bytes(clientIp) + Bytes(host) + Bytes(method)
+        EstimatedBytes = Bytes(userAgent) + Bytes(clientIp) + Bytes(host) + Bytes(method)
             + Bytes(signature) + Bytes(signatureInput) + Bytes(signatureAgent);
     }
 
@@ -55,7 +52,10 @@ internal sealed class Sighting
     /// <summary>Both <c>Signature</c> and <c>Signature-Input</c> are present.</summary>
     internal bool Signed => Signature is not null && SignatureInput is not null;
 
-    /// <summary>The bytes this item adds to a report, estimated.</summary>
+    /// <summary>
+    /// The UTF-8 bytes of the item's sent fields, summed: what the 64 KiB
+    /// trigger and batch limit measure.
+    /// </summary>
     internal int EstimatedBytes { get; }
 
     /// <summary>
@@ -64,7 +64,7 @@ internal sealed class Sighting
     /// </summary>
     /// <remarks>
     /// A signature header over the limit counts as absent, before the key and
-    /// <see cref="Signed"/> are worked out; a <c>Host</c> over it is left out.
+    /// <see cref="Signed"/> are worked out. The <c>Host</c> is kept as received.
     /// </remarks>
     internal static Sighting? Prepare(
         string method, string? userAgent, string? clientIp, string? host,
@@ -83,7 +83,6 @@ internal sealed class Sighting
         signature = WithinLimit(signature);
         signatureInput = WithinLimit(signatureInput);
         signatureAgent = WithinLimit(signatureAgent);
-        host = WithinLimit(host);
         bool signed = signature is not null && signatureInput is not null;
         return new Sighting(
             KeyOf(userAgent, canonical, signatureAgent ?? string.Empty, signed),

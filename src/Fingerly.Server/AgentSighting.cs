@@ -101,10 +101,10 @@ public sealed class AgentAnswer
 {
     /// <summary>
     /// The answer for a request nobody has answered yet. Its
-    /// <see cref="VisitorKind"/> is <c>"unknown"</c>, which matches none of
+    /// <see cref="VisitorKind"/> is empty, which matches none of
     /// <see cref="VisitorKinds"/>, so a check against them fails open.
     /// </summary>
-    public static readonly AgentAnswer Unknown = new() { VisitorKind = "unknown" };
+    public static readonly AgentAnswer Unknown = new();
 
     /// <summary>
     /// The seconds this answer may be reused for the same user agent, address

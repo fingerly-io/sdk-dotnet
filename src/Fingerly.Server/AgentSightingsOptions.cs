@@ -17,7 +17,7 @@ public sealed class AgentSightingsOptions
     /// <summary>The default <see cref="Capacity"/>.</summary>
     public const int DefaultCapacity = 4096;
 
-    /// <summary>The largest <see cref="Capacity"/> accepted.</summary>
+    /// <summary>The largest <see cref="Capacity"/>; a larger value is held to this.</summary>
     public const int MaxCapacity = 65536;
 
     /// <summary>
@@ -30,14 +30,15 @@ public sealed class AgentSightingsOptions
     /// one, return <see cref="ProxyRequest.RemoteAddress"/>. Never use the
     /// left-most <c>X-Forwarded-For</c> value: the visitor writes it. A request
     /// for which it returns anything but one address is not reported, and the
-    /// mistake is logged once.
+    /// mistake is logged at most once a minute.
     /// </remarks>
     [JsonIgnore]
     public Func<ProxyRequest, string?>? ClientIp { get; set; }
 
     /// <summary>
     /// How many answers are remembered, least recently used first out.
-    /// Defaults to 4096 (about 1.5 MB); at most 65536 (about 25 MB).
+    /// Defaults to 4096 (about 1.5 MB); at most 65536 (about 25 MB), and a
+    /// larger value is held to that.
     /// </summary>
     public int Capacity { get; set; } = DefaultCapacity;
 
