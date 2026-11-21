@@ -150,11 +150,17 @@ not send it.
 
 `Event.Ai` is set only when `Event.VisitorKind` is `VisitorKinds.AiBot`, and
 null otherwise: an `AiAgent` with the agent's `Name`, `Provider`, `Purpose`,
-`Runtime`, `Declared` and `Verification`. The identity comes from the user
-agent, which anyone can copy, and is not verified yet
-(`AiVerificationMethods.None`, `AiVerificationResults.NotAttempted`), so treat
-it as a label, not proof. Only clients that run the Fingerly SDK produce
-events, so crawlers that do not run JavaScript never appear. `EventListOptions`
+`Runtime`, `Declared` and `Verification`. The agent is named by a Web Bot Auth
+signature when the request carried one, otherwise by its user agent.
+`Verification` says how far that was checked:
+`AiVerificationMethods.Signature` (the operator's published key signed the
+request) or `AiVerificationMethods.IpList` (the address is inside the
+operator's published ranges), with result `AiVerificationResults.Pass`,
+`AiVerificationResults.Fail` (the name was borrowed), or
+`AiVerificationResults.NotAttempted` with method `AiVerificationMethods.None`
+(the operator publishes nothing to check against, or it could not be checked;
+the name is then only the client's claim). Only clients that run the Fingerly
+SDK produce events, so crawlers that do not run JavaScript never appear. `EventListOptions`
 filters on `Kind`, `AiProvider` (exact and case-sensitive, such as `OpenAI`)
 and `AiPurpose`.
 

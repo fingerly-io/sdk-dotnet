@@ -89,11 +89,20 @@ public sealed class EventTrigger
 /// <see cref="VisitorKinds.AiBot"/>.
 /// </summary>
 /// <remarks>
-/// The identity comes from the agent's user agent, which anyone can copy. It
-/// is not verified yet: <see cref="Verification"/> says how far the claim was
-/// checked, so read it as a label, not as proof. <see cref="Purpose"/>,
-/// <see cref="Runtime"/> and the verification values are plain strings, so a
-/// value the API adds later still reads.
+/// The agent is named by a Web Bot Auth signature when the request carried
+/// one, otherwise by its user agent. <see cref="Verification"/> says how far
+/// that was checked: <see cref="AiVerificationMethods.Signature"/> (the
+/// operator's published key signed the request) or
+/// <see cref="AiVerificationMethods.IpList"/> (the address is inside the
+/// operator's published ranges), with result
+/// <see cref="AiVerificationResults.Pass"/>,
+/// <see cref="AiVerificationResults.Fail"/> (the name was borrowed), or
+/// <see cref="AiVerificationResults.NotAttempted"/> with method
+/// <see cref="AiVerificationMethods.None"/> (the operator publishes nothing to
+/// check against, or it could not be checked; the name is then only the
+/// client's claim). <see cref="Purpose"/>, <see cref="Runtime"/> and the
+/// verification values are plain strings, so a value the API adds later still
+/// reads.
 /// </remarks>
 public sealed class AiAgent
 {
@@ -294,8 +303,9 @@ public sealed class Event
     /// <summary>
     /// The AI agent behind the event, present only when
     /// <see cref="VisitorKind"/> is <see cref="VisitorKinds.AiBot"/> and
-    /// <see langword="null"/> otherwise. The identity comes from the user
-    /// agent and is not verified yet; see <see cref="AiAgent.Verification"/>.
+    /// <see langword="null"/> otherwise. The agent is named by a Web Bot Auth
+    /// signature when the request carried one, otherwise by its user agent;
+    /// see <see cref="AiAgent.Verification"/> for how far that was checked.
     /// </summary>
     [JsonPropertyName("ai")]
     public AiAgent? Ai { get; init; }
