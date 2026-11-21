@@ -26,6 +26,8 @@ namespace Fingerly;
     UnmappedMemberHandling = JsonUnmappedMemberHandling.Skip)]
 [JsonSerializable(typeof(Event))]
 [JsonSerializable(typeof(EventPage))]
+[JsonSerializable(typeof(AiAgent))]
+[JsonSerializable(typeof(AiVerification))]
 [JsonSerializable(typeof(WebhookEvent))]
 [JsonSerializable(typeof(ApiErrorEnvelope))]
 [JsonSerializable(typeof(DeviceCheckBits))]

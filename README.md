@@ -147,6 +147,22 @@ EventPage page = await fingerly.Events.ListAsync(
 `GetAsync` and on every `ListAsync` row; it is null when an older server does
 not send it.
 
+`Event.Ai` is set only when `Event.VisitorKind` is `VisitorKinds.AiBot`, and
+null otherwise: an `AiAgent` with the agent's `Name`, `Provider`, `Purpose`,
+`Runtime`, `Declared` and `Verification`. The identity comes from the user
+agent, which anyone can copy, and is not verified yet
+(`AiVerificationMethods.None`, `AiVerificationResults.NotAttempted`), so treat
+it as a label, not proof. Only clients that run the Fingerly SDK produce
+events, so crawlers that do not run JavaScript never appear. `EventListOptions`
+filters on `Kind`, `AiProvider` (exact and case-sensitive, such as `OpenAI`)
+and `AiPurpose`.
+
+```csharp
+EventPage fetches = await fingerly.Events.ListAsync(
+    new EventListOptions { Kind = VisitorKinds.AiBot, AiPurpose = AiPurposes.UserFetch },
+    cancellationToken);
+```
+
 `Raw` keeps the response body exactly as it arrived, so a field the API adds
 later is reachable without an SDK upgrade.
 
@@ -213,7 +229,9 @@ they never collide with the properties they describe (or with
 | `SuspectLevels` | `Event.SuspectLevel` and `EventListOptions.Level` |
 | `Confidences` | `EventTrigger.Confidence` |
 | `EventStates`, `Environments`, `Platforms` | `Event.State`, `Event.Environment`, `Event.Platform` |
-| `AnonymityNetworks`, `DeviceKinds`, `VisitorKinds` | `Event.AnonymityNetwork`, `Event.DeviceKind`, `Event.VisitorKind` |
+| `AnonymityNetworks`, `DeviceKinds`, `VisitorKinds` | `Event.AnonymityNetwork`, `Event.DeviceKind`, `Event.VisitorKind` and `EventListOptions.Kind` |
+| `AiPurposes`, `AiRuntimes` | `AiAgent.Purpose` (and `EventListOptions.AiPurpose`), `AiAgent.Runtime` |
+| `AiVerificationMethods`, `AiVerificationResults` | `AiVerification.Method`, `AiVerification.Result` |
 | `AttestationStates`, `AttestationStatuses`, `AttestSkippedReasons` | the archived document's `attestation.state`, `attestation.status` and `attestation.attest_skipped` |
 | `VerifyReasons` | `VerifyResult.Reason` |
 | `WebhookEventTypes`, `WebhookEnvironments` | `WebhookEvent.Type`, `WebhookEvent.Environment` |

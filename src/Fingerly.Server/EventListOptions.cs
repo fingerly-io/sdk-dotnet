@@ -44,6 +44,26 @@ public sealed class EventListOptions
     public string? Level { get; set; }
 
     /// <summary>
+    /// Restricts it to one visitor kind, such as <c>ai_bot</c>; see
+    /// <see cref="VisitorKinds"/>. The server rejects a kind it does not know.
+    /// </summary>
+    public string? Kind { get; set; }
+
+    /// <summary>
+    /// Restricts it to AI agents from one operator, exactly as events name it
+    /// in <see cref="AiAgent.Provider"/>, such as <c>OpenAI</c>. The match is
+    /// case-sensitive.
+    /// </summary>
+    public string? AiProvider { get; set; }
+
+    /// <summary>
+    /// Restricts it to AI agents with one purpose, such as <c>user_fetch</c>;
+    /// see <see cref="AiPurposes"/>. The server rejects a purpose it does not
+    /// know.
+    /// </summary>
+    public string? AiPurpose { get; set; }
+
+    /// <summary>
     /// Renders the filters as a URL query, omitting every unset one.
     /// </summary>
     /// <returns>The query including its leading <c>?</c>, or an empty string.</returns>
@@ -53,7 +73,7 @@ public sealed class EventListOptions
     /// </exception>
     internal string ToQuery()
     {
-        var parts = new List<string>(6);
+        var parts = new List<string>(9);
         if (From.HasValue)
         {
             parts.Add("from=" + Uri.EscapeDataString(Format(From.Value)));
@@ -77,6 +97,18 @@ public sealed class EventListOptions
         if (Level is not null)
         {
             parts.Add("level=" + Uri.EscapeDataString(Level));
+        }
+        if (Kind is not null)
+        {
+            parts.Add("kind=" + Uri.EscapeDataString(Kind));
+        }
+        if (AiProvider is not null)
+        {
+            parts.Add("ai_provider=" + Uri.EscapeDataString(AiProvider));
+        }
+        if (AiPurpose is not null)
+        {
+            parts.Add("ai_purpose=" + Uri.EscapeDataString(AiPurpose));
         }
         if (parts.Count == 0)
         {

@@ -100,9 +100,15 @@ public class EventsServiceTest
             Limit = 25,
             Level = "high",
             Visitor = "v 1",
+            Kind = VisitorKinds.AiBot,
+            AiProvider = "OpenAI",
+            AiPurpose = AiPurposes.UserFetch,
         });
 
         string query = api.Requests[0].QueryString;
+        Assert.Contains("kind=ai_bot", query, StringComparison.Ordinal);
+        Assert.Contains("ai_provider=OpenAI", query, StringComparison.Ordinal);
+        Assert.Contains("ai_purpose=user_fetch", query, StringComparison.Ordinal);
         // The window start is sent as UTC, whatever offset it was written in.
         Assert.Contains("from=2026-01-02T01%3A04%3A05.000Z", query, StringComparison.Ordinal);
         Assert.Contains("page=2", query, StringComparison.Ordinal);

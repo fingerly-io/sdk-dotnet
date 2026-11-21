@@ -61,7 +61,83 @@ public class ContractTest
             {
                 Assert.Equal(score.GetInt32(), value);
             }
+
+            Assert.Equal(
+                fixture.Body.TryGetProperty("visitor_kind", out JsonElement kind) ? kind.GetString() : null,
+                stored.VisitorKind);
+            // ai is absent on every row that is not an AI agent.
+            Assert.Equal(
+                fixture.Body.TryGetProperty("ai", out JsonElement ai) && ai.ValueKind == JsonValueKind.Object,
+                stored.Ai is not null);
         }
+    }
+
+    [Fact]
+    public async Task ReadsTheAiAgentFixture()
+    {
+        ResponseFixture fixture = Named("ai_agent");
+        await using TestApi api = await TestApi.RespondAsync(fixture.Status, fixture.Json);
+        using FingerlyClient fingerly = Client(api);
+
+        Event stored = await fingerly.Events.GetAsync("id");
+
+        Assert.Equal(VisitorKinds.AiBot, stored.VisitorKind);
+        AiAgent ai = Assert.IsType<AiAgent>(stored.Ai);
+        Assert.Equal("ChatGPT-User", ai.Name);
+        Assert.Equal("OpenAI", ai.Provider);
+        Assert.Equal(AiPurposes.UserFetch, ai.Purpose);
+        Assert.Equal(AiRuntimes.ProviderCloud, ai.Runtime);
+        Assert.True(ai.Declared);
+        AiVerification verification = Assert.IsType<AiVerification>(ai.Verification);
+        Assert.Equal(AiVerificationMethods.None, verification.Method);
+        Assert.Equal(AiVerificationResults.NotAttempted, verification.Result);
+    }
+
+    [Fact]
+    public async Task ReadsAnEventWithoutAi()
+    {
+        ResponseFixture fixture = Named("event");
+        Assert.False(fixture.Body.TryGetProperty("ai", out _));
+        await using TestApi api = await TestApi.RespondAsync(fixture.Status, fixture.Json);
+        using FingerlyClient fingerly = Client(api);
+
+        Event stored = await fingerly.Events.GetAsync("id");
+
+        Assert.Null(stored.Ai);
+    }
+
+    [Fact]
+    public async Task ReadsAiValuesThisSdkDoesNotKnow()
+    {
+        string body = Named("ai_agent").Json
+            .Replace("\"user_fetch\"", "\"future_purpose\"", StringComparison.Ordinal)
+            .Replace("\"provider_cloud\"", "\"future_runtime\"", StringComparison.Ordinal)
+            .Replace("\"none\"", "\"future_method\"", StringComparison.Ordinal)
+            .Replace("\"not_attempted\"", "\"future_result\"", StringComparison.Ordinal)
+            .Replace("\"ai_bot\"", "\"future_kind\"", StringComparison.Ordinal);
+        await using TestApi api = await TestApi.RespondAsync(200, body);
+        using FingerlyClient fingerly = Client(api);
+
+        Event stored = await fingerly.Events.GetAsync("id");
+
+        Assert.Equal("future_kind", stored.VisitorKind);
+        AiAgent ai = Assert.IsType<AiAgent>(stored.Ai);
+        Assert.Equal("future_purpose", ai.Purpose);
+        Assert.Equal("future_runtime", ai.Runtime);
+        Assert.Equal("future_method", ai.Verification?.Method);
+        Assert.Equal("future_result", ai.Verification?.Result);
+    }
+
+    private static ResponseFixture Named(string name)
+    {
+        foreach (ResponseFixture fixture in Fixtures.Responses("SDKEventOut"))
+        {
+            if (fixture.Name == name)
+            {
+                return fixture;
+            }
+        }
+        throw new InvalidOperationException("no fixture named " + name);
     }
 
     [Fact]

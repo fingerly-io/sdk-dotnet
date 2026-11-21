@@ -276,3 +276,73 @@ public static class VisitorKinds
     /// <summary>A named search engine's crawler.</summary>
     public const string SearchCrawler = "search_crawler";
 }
+
+/// <summary>
+/// The <see cref="AiAgent.Purpose"/> values, as the exact strings the API
+/// sends. The API can add values, so keep a default branch.
+/// </summary>
+public static class AiPurposes
+{
+    /// <summary>Collecting content to train models.</summary>
+    public const string Training = "training";
+
+    /// <summary>Indexing for an AI answer or search product.</summary>
+    public const string Search = "search";
+
+    /// <summary>Reading a page a person asked an assistant to read.</summary>
+    public const string UserFetch = "user_fetch";
+
+    /// <summary>Driving a browser on a person's behalf.</summary>
+    public const string Agent = "agent";
+}
+
+/// <summary>
+/// The <see cref="AiAgent.Runtime"/> values, as the exact strings the API
+/// sends. The API can add values, so keep a default branch.
+/// </summary>
+public static class AiRuntimes
+{
+    /// <summary>The operator's own infrastructure.</summary>
+    public const string ProviderCloud = "provider_cloud";
+
+    /// <summary>A third party's cloud browser.</summary>
+    public const string HostedBrowser = "hosted_browser";
+
+    /// <summary>A person's own browser.</summary>
+    public const string UserDevice = "user_device";
+}
+
+/// <summary>
+/// The <see cref="AiVerification.Method"/> values, as the exact strings the
+/// API sends. The API can add values, so keep a default branch.
+/// </summary>
+public static class AiVerificationMethods
+{
+    /// <summary>A signed request.</summary>
+    public const string Signature = "signature";
+
+    /// <summary>The operator's published address ranges.</summary>
+    public const string IpList = "ip_list";
+
+    /// <summary>A reverse lookup confirmed forward.</summary>
+    public const string ReverseDns = "reverse_dns";
+
+    /// <summary>No check was made.</summary>
+    public const string None = "none";
+}
+
+/// <summary>
+/// The <see cref="AiVerification.Result"/> values, as the exact strings the
+/// API sends. The API can add values, so keep a default branch.
+/// </summary>
+public static class AiVerificationResults
+{
+    /// <summary>The claim held.</summary>
+    public const string Pass = "pass";
+
+    /// <summary>The claim was checked and did not hold.</summary>
+    public const string Fail = "fail";
+
+    /// <summary>No check was made.</summary>
+    public const string NotAttempted = "not_attempted";
+}

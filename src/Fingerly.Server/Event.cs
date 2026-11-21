@@ -85,6 +85,76 @@ public sealed class EventTrigger
 }
 
 /// <summary>
+/// The AI agent behind an event whose <see cref="Event.VisitorKind"/> is
+/// <see cref="VisitorKinds.AiBot"/>.
+/// </summary>
+/// <remarks>
+/// The identity comes from the agent's user agent, which anyone can copy. It
+/// is not verified yet: <see cref="Verification"/> says how far the claim was
+/// checked, so read it as a label, not as proof. <see cref="Purpose"/>,
+/// <see cref="Runtime"/> and the verification values are plain strings, so a
+/// value the API adds later still reads.
+/// </remarks>
+public sealed class AiAgent
+{
+    /// <summary>The agent as its operator names it, such as <c>ChatGPT-User</c> or <c>Claude-User</c>.</summary>
+    [JsonPropertyName("name")]
+    public string? Name { get; init; }
+
+    /// <summary>The company that operates the agent, such as <c>OpenAI</c>, <c>Anthropic</c> or <c>Google</c>.</summary>
+    [JsonPropertyName("provider")]
+    public string? Provider { get; init; }
+
+    /// <summary>
+    /// What the operator says the traffic is for: <c>training</c>,
+    /// <c>search</c>, <c>user_fetch</c> or <c>agent</c>. See <see cref="AiPurposes"/>.
+    /// </summary>
+    [JsonPropertyName("purpose")]
+    public string? Purpose { get; init; }
+
+    /// <summary>
+    /// Where the agent runs: <c>provider_cloud</c>, <c>hosted_browser</c> or
+    /// <c>user_device</c>. See <see cref="AiRuntimes"/>.
+    /// </summary>
+    [JsonPropertyName("runtime")]
+    public string? Runtime { get; init; }
+
+    /// <summary>True when the agent named itself, in its user agent or a signature.</summary>
+    [JsonPropertyName("declared")]
+    public bool Declared { get; init; }
+
+    /// <summary>How the agent's claimed identity was checked, and what that found.</summary>
+    [JsonPropertyName("verification")]
+    public AiVerification? Verification { get; init; }
+
+    /// <inheritdoc/>
+    public override string ToString() =>
+        "AiAgent[name=" + Name + ", provider=" + Provider + ", purpose=" + Purpose + "]";
+}
+
+/// <summary>How an <see cref="AiAgent"/>'s claimed identity was checked, and what that found.</summary>
+public sealed class AiVerification
+{
+    /// <summary>
+    /// <c>signature</c>, <c>ip_list</c>, <c>reverse_dns</c> or <c>none</c>.
+    /// See <see cref="AiVerificationMethods"/>.
+    /// </summary>
+    [JsonPropertyName("method")]
+    public string? Method { get; init; }
+
+    /// <summary>
+    /// <c>pass</c>, <c>fail</c> or <c>not_attempted</c>. See
+    /// <see cref="AiVerificationResults"/>.
+    /// </summary>
+    [JsonPropertyName("result")]
+    public string? Result { get; init; }
+
+    /// <inheritdoc/>
+    public override string ToString() =>
+        "AiVerification[method=" + Method + ", result=" + Result + "]";
+}
+
+/// <summary>
 /// A stored identification event.
 /// </summary>
 /// <remarks>
@@ -220,6 +290,15 @@ public sealed class Event
     /// <summary>The kind of visitor, such as <c>human</c> or <c>ai_bot</c>. See <see cref="VisitorKinds"/>.</summary>
     [JsonPropertyName("visitor_kind")]
     public string? VisitorKind { get; init; }
+
+    /// <summary>
+    /// The AI agent behind the event, present only when
+    /// <see cref="VisitorKind"/> is <see cref="VisitorKinds.AiBot"/> and
+    /// <see langword="null"/> otherwise. The identity comes from the user
+    /// agent and is not verified yet; see <see cref="AiAgent.Verification"/>.
+    /// </summary>
+    [JsonPropertyName("ai")]
+    public AiAgent? Ai { get; init; }
 
     /// <summary>
     /// The suspect score, or <see langword="null"/> when the request was not

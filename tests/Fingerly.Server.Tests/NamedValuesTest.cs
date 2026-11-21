@@ -106,6 +106,10 @@ public class NamedValuesTest
         AssertConstants(typeof(AnonymityNetworks), "tor", "relay", "vpn", "proxy", "hosting");
         AssertConstants(typeof(DeviceKinds), "desktop", "mobile", "tablet", "server");
         AssertConstants(typeof(VisitorKinds), "human", "ai_bot", "automation", "search_crawler");
+        AssertConstants(typeof(AiPurposes), "training", "search", "user_fetch", "agent");
+        AssertConstants(typeof(AiRuntimes), "provider_cloud", "hosted_browser", "user_device");
+        AssertConstants(typeof(AiVerificationMethods), "signature", "ip_list", "reverse_dns", "none");
+        AssertConstants(typeof(AiVerificationResults), "pass", "fail", "not_attempted");
     }
 
     [Fact]
