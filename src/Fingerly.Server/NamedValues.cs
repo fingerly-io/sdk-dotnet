@@ -346,3 +346,13 @@ public static class AiVerificationResults
     /// <summary>No check was made.</summary>
     public const string NotAttempted = "not_attempted";
 }
+
+/// <summary>
+/// The <see cref="FingerlyApiException.RateLimitScope"/> values this SDK acts
+/// on, as the exact strings the API sends. Other scopes can appear.
+/// </summary>
+public static class RateLimitScopes
+{
+    /// <summary>The organization's daily allowance, renewed at the next UTC day.</summary>
+    public const string Daily = "daily";
+}

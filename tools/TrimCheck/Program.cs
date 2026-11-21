@@ -23,6 +23,8 @@ await Expect<FingerlyException>(
 await Expect<FingerlyException>(() => fingerly.DeviceCheck.QueryAsync("r1"));
 await Expect<FingerlyException>(
     () => fingerly.DeviceCheck.WriteAsync("r1", new DeviceCheckWrite { Bit0 = true }));
+await Expect<FingerlyException>(() => fingerly.Agents.ReportSightingsAsync(
+    [new AgentSighting { UserAgent = "GPTBot/1.4", ClientIp = "203.0.113.7", Host = "shop.example" }]));
 
 Console.WriteLine(Webhooks.Verify(
     "whsec", Encoding.UTF8.GetBytes("{}"), "1800000000", "sha256=nope"));

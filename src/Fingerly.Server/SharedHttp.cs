@@ -136,6 +136,42 @@ internal static class SharedHttp
     }
 }
 
+/// <summary>
+/// A JSON request body that records whether the handler began sending it.
+/// </summary>
+/// <remarks>
+/// A deadline that expires before the body was asked for means the request
+/// never left (the connection was still being opened); one that expires after
+/// means the server may have acted on it. Retrying only the first kind is what
+/// keeps a report from being counted twice.
+/// </remarks>
+internal sealed class TrackedJsonContent : HttpContent
+{
+    private readonly byte[] _json;
+    private int _started;
+
+    internal TrackedJsonContent(byte[] json)
+    {
+        _json = json;
+        Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/json");
+    }
+
+    /// <summary>True once the handler began writing the body.</summary>
+    internal bool Started => Volatile.Read(ref _started) == 1;
+
+    protected override Task SerializeToStreamAsync(Stream stream, TransportContext? context)
+    {
+        Volatile.Write(ref _started, 1);
+        return stream.WriteAsync(_json, 0, _json.Length);
+    }
+
+    protected override bool TryComputeLength(out long length)
+    {
+        length = _json.Length;
+        return true;
+    }
+}
+
 /// <summary>Raised when an answer passes <see cref="SharedHttp.ResponseLimit"/>.</summary>
 internal sealed class ResponseTooLargeException : IOException
 {

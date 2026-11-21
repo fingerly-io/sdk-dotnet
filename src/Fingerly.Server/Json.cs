@@ -34,6 +34,8 @@ namespace Fingerly;
 [JsonSerializable(typeof(DeviceCheckWrite))]
 [JsonSerializable(typeof(DeviceCheckWriteResult))]
 [JsonSerializable(typeof(ConsumeResult))]
+[JsonSerializable(typeof(AgentSightingsBody))]
+[JsonSerializable(typeof(AgentSightingsResult))]
 internal sealed partial class FingerlyJsonContext : JsonSerializerContext
 {
 }

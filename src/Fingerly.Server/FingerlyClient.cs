@@ -116,10 +116,17 @@ public sealed class FingerlyClient : IDisposable
         _httpClient = httpClient ?? CreateHttpClient(options.Handler);
         Events = new EventsService(this);
         DeviceCheck = new DeviceCheckService(this);
+        Agents = new AgentsService(this);
     }
 
     /// <summary>Event reads under this client's secret key.</summary>
     public EventsService Events { get; }
+
+    /// <summary>
+    /// Reports the requests your server served and answers what sent each
+    /// one, including AI crawlers that never run a page's JavaScript.
+    /// </summary>
+    public AgentsService Agents { get; }
 
     /// <summary>
     /// Reads and writes the Apple DeviceCheck bits of an iOS event's device,
@@ -178,24 +185,36 @@ public sealed class FingerlyClient : IDisposable
     /// <param name="path">The path under the API base.</param>
     /// <param name="json">A JSON body, or null to send none.</param>
     /// <param name="cancellationToken">Cancels the call.</param>
+    internal Task<byte[]> SendAsync(
+        HttpMethod method, string path, byte[]? json, CancellationToken cancellationToken) =>
+        SendAsync(method, path, json is null ? null : new TrackedJsonContent(json), null, cancellationToken);
+
+    /// <summary>
+    /// Performs one authenticated request with a body the caller built, under
+    /// <paramref name="timeout"/> instead of the client's own when one is given.
+    /// </summary>
+    /// <remarks>
+    /// A <see cref="TrackedJsonContent"/> body records whether the handler
+    /// began writing it, which tells a timeout before the request left from
+    /// one after.
+    /// </remarks>
     internal async Task<byte[]> SendAsync(
-        HttpMethod method, string path, byte[]? json, CancellationToken cancellationToken)
+        HttpMethod method, string path, HttpContent? content, TimeSpan? timeout,
+        CancellationToken cancellationToken)
     {
         var uri = new Uri(_baseUri, path);
         using var request = new HttpRequestMessage(method, uri);
         request.Headers.TryAddWithoutValidation("X-API-Key", _secretKey);
         request.Headers.TryAddWithoutValidation("Accept", "application/json");
         request.Headers.TryAddWithoutValidation("User-Agent", UserAgentValue);
-        if (json is not null)
+        if (content is not null)
         {
-            var content = new ByteArrayContent(json);
-            content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/json");
             request.Content = content;
         }
 
         using CancellationTokenSource deadline =
             CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        deadline.CancelAfter(_timeout);
+        deadline.CancelAfter(timeout ?? _timeout);
 
         try
         {
@@ -275,6 +294,9 @@ public sealed class FingerlyClient : IDisposable
     private FingerlyApiException ApiError(int status, byte[] body, HttpResponseMessage response)
     {
         int? retryAfter = RetryAfterSeconds(response);
+        string? scope = response.Headers.TryGetValues("Fingerly-RateLimit-Scope", out var scopes)
+            ? RedactOrNull(scopes.FirstOrDefault(Keys.IsHeaderSafe))
+            : null;
         string? headerRequestId = response.Headers.TryGetValues("X-Request-Id", out var ids)
             ? ids.FirstOrDefault(Keys.IsHeaderSafe)
             : null;
@@ -282,7 +304,7 @@ public sealed class FingerlyClient : IDisposable
 
         if (body.Length == 0 || body.Length > MaxErrorBody)
         {
-            return new FingerlyApiException(status, null, null, headerRequestId, retryAfter);
+            return new FingerlyApiException(status, null, null, headerRequestId, retryAfter, scope);
         }
 
         ApiErrorEnvelope envelope;
@@ -294,7 +316,7 @@ public sealed class FingerlyClient : IDisposable
         {
             // A non-JSON body still reports its HTTP status, and nothing of
             // what it said.
-            return new FingerlyApiException(status, null, null, headerRequestId, retryAfter);
+            return new FingerlyApiException(status, null, null, headerRequestId, retryAfter, scope);
         }
 
         JsonElement? details = null;
@@ -312,7 +334,7 @@ public sealed class FingerlyClient : IDisposable
             return new FingerlyEventAlreadyConsumedException(
                 status, code, details, requestId, retryAfter, RedactOrNull(consumedAt));
         }
-        return new FingerlyApiException(status, code, details, requestId, retryAfter);
+        return new FingerlyApiException(status, code, details, requestId, retryAfter, scope);
     }
 
     /// <summary>The value of a string tree, or null for any other kind.</summary>
