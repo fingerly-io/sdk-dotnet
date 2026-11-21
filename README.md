@@ -624,8 +624,10 @@ answer has expired, it returns `AgentAnswer.Unknown` (`IsUnknown` is true, and
 its `VisitorKind` is empty, so it matches none of `VisitorKinds`): serve the
 request as usual.
 A signed request is checked on every report, so its answer is never
-remembered. The label comes from what the request claims and from the checks
-in `answer.Ai.Verification`; read it as a label, not as proof.
+remembered. `answer.Ai.Verification` says how far the agent's name was
+checked: a `Pass` means the operator's key or published ranges confirmed it, a
+`Fail` means the name was borrowed, and `NotAttempted` leaves it the client's
+claim.
 
 What happens behind it:
 
