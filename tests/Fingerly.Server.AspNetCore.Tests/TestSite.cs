@@ -33,6 +33,9 @@ internal sealed class TestSite : IAsyncDisposable
     /// <summary>A client pointed at the running site.</summary>
     internal HttpClient Client { get; }
 
+    /// <summary>The site's services.</summary>
+    internal IServiceProvider Services => _app.Services;
+
     internal static Task<TestSite> StartAsync(Action<WebApplication> configure) =>
         StartAsync(_ => { }, configure);
 

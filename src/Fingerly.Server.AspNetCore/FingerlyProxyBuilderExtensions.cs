@@ -69,6 +69,49 @@ public static class FingerlyProxyApplicationBuilderExtensions
         }
         return app.UseMiddleware<FingerlyProxyMiddleware>(proxy);
     }
+
+    /// <summary>
+    /// Reports the responses the application serves to the
+    /// <see cref="AgentSightings"/> registered with
+    /// <c>services.AddFingerlyAgentSightings(...)</c>.
+    /// </summary>
+    /// <remarks>
+    /// Place it first, before static files and routing, so it sees every
+    /// response. It never delays or changes one.
+    /// </remarks>
+    /// <param name="app">The pipeline being built.</param>
+    /// <returns>The same pipeline, for chaining.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="app"/> is null.</exception>
+    /// <exception cref="InvalidOperationException">No AgentSightings was registered.</exception>
+    public static IApplicationBuilder UseFingerlyAgentSightings(this IApplicationBuilder app)
+    {
+        if (app is null)
+        {
+            throw new ArgumentNullException(nameof(app));
+        }
+        return app.UseFingerlyAgentSightings(app.ApplicationServices.GetRequiredService<AgentSightings>());
+    }
+
+    /// <summary>
+    /// Reports the responses the application serves to the instance given.
+    /// </summary>
+    /// <param name="app">The pipeline being built.</param>
+    /// <param name="sightings">The configured component.</param>
+    /// <returns>The same pipeline, for chaining.</returns>
+    /// <exception cref="ArgumentNullException">An argument is null.</exception>
+    public static IApplicationBuilder UseFingerlyAgentSightings(
+        this IApplicationBuilder app, AgentSightings sightings)
+    {
+        if (app is null)
+        {
+            throw new ArgumentNullException(nameof(app));
+        }
+        if (sightings is null)
+        {
+            throw new ArgumentNullException(nameof(sightings));
+        }
+        return app.UseMiddleware<FingerlyAgentSightingsMiddleware>(sightings);
+    }
 }
 
 /// <summary>
