@@ -16,6 +16,10 @@ using System.Text.Json;
 
 string[] files = ["openapi.json", "fixtures.json"];
 
+// Copied too, but the manifest records no hash for them, so each must at least
+// parse as JSON before it lands.
+string[] unhashed = ["agent-sightings-vectors.json"];
+
 string source = Environment.GetEnvironmentVariable("FINGERLY_CONTRACT_DIR") ?? "contract";
 string target = Path.Combine(RepositoryRoot(), "contract");
 
@@ -35,6 +39,14 @@ foreach (string name in files)
     if (actual != expected)
     {
         throw new InvalidOperationException($"Invalid contract hash for {name}: {actual}");
+    }
+    staged[name] = content;
+}
+foreach (string name in unhashed)
+{
+    byte[] content = File.ReadAllBytes(Path.Combine(source, name));
+    using (JsonDocument.Parse(content))
+    {
     }
     staged[name] = content;
 }
