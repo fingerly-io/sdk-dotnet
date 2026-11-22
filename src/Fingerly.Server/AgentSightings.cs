@@ -217,8 +217,9 @@ public sealed class AgentSightings : IDisposable
     /// </summary>
     /// <remarks>
     /// In memory only; it never waits on the network and never throws. A
-    /// request with no usable address or a <c>User-Agent</c> over 4096 bytes
-    /// is not reported.
+    /// request with no usable address, or a <c>User-Agent</c> or method over
+    /// 4096 UTF-8 bytes, is not reported; a longer <c>Host</c> or signature
+    /// header is left out of the report.
     /// </remarks>
     /// <param name="request">The request, with its headers and <see cref="ProxyRequest.RemoteAddress"/>.</param>
     /// <param name="responseContentType">The response's <c>Content-Type</c>, or null.</param>

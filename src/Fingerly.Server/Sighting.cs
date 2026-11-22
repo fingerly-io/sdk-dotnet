@@ -60,21 +60,29 @@ internal sealed class Sighting
 
     /// <summary>
     /// Prepares a request, or answers null when it is not reported: a user
-    /// agent over the limit, or an address that is not one IP literal.
+    /// agent or method over the limit, or an address that is not one IP literal.
     /// </summary>
     /// <remarks>
     /// A signature header that is empty, whitespace only or over the limit
     /// counts as absent, before the key and <see cref="Signed"/> are worked
-    /// out. The <c>Host</c> is kept as received.
+    /// out. The <c>Host</c> is kept as received, and left out when over the
+    /// limit. Every limit is on the UTF-8 bytes the JSON body carries, which
+    /// is what the API measures: a lone surrogate counts as the three bytes
+    /// of the U+FFFD it is written as.
     /// </remarks>
     internal static Sighting? Prepare(
         string method, string? userAgent, string? clientIp, string? host,
         string? signature, string? signatureInput, string? signatureAgent)
     {
         userAgent ??= string.Empty;
-        if (Bytes(userAgent) > MaxHeaderBytes)
+        method ??= string.Empty;
+        if (Bytes(userAgent) > MaxHeaderBytes || Bytes(method) > MaxHeaderBytes)
         {
             return null;
+        }
+        if (Bytes(host) > MaxHeaderBytes)
+        {
+            host = null;
         }
         string? canonical = CanonicalIp(clientIp);
         if (canonical is null)
@@ -87,7 +95,7 @@ internal sealed class Sighting
         bool signed = signature is not null && signatureInput is not null;
         return new Sighting(
             KeyOf(userAgent, canonical, signatureAgent ?? string.Empty, signed),
-            userAgent, canonical, host, method ?? string.Empty, signature, signatureInput, signatureAgent);
+            userAgent, canonical, host, method, signature, signatureInput, signatureAgent);
     }
 
     /// <summary>

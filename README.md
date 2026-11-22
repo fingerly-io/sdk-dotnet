@@ -651,10 +651,11 @@ What happens behind it:
   that timed out after it was sent, is dropped, so nothing is counted twice.
   Each is logged at most once a minute through `ILogger`, and so is a
   `ClientIp` that gave no single address.
-- **What is sent.** For each request: the `User-Agent` (a value over 4096
-  bytes is not reported), the address from `ClientIp`, the `Host`, the method,
-  the `Signature`, `Signature-Input` and `Signature-Agent` headers when present,
-  and a count. Never the path, the query string, cookies, `Authorization`,
+- **What is sent.** For each request: the `User-Agent`, the address from
+  `ClientIp`, the `Host`, the method, the `Signature`, `Signature-Input` and
+  `Signature-Agent` headers when present, and a count. Limits are 4096 UTF-8
+  bytes as sent: a request whose `User-Agent` or method is longer is not
+  reported, and a longer `Host` or signature header is left out. Never the path, the query string, cookies, `Authorization`,
   other headers, the body or the response, and none of these is logged.
 - **Shutdown.** Disposing `AgentSightings`, as the host does when it stops,
   sends what is pending within 5 seconds. Where a process can end without

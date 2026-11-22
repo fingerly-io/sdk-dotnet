@@ -921,6 +921,35 @@ public class AgentSightingsTest
     }
 
     [Fact]
+    public async Task AKeptBatchMergedWithNewCountsStaysWithinTheApiLimit()
+    {
+        var release = new TaskCompletionSource<bool>();
+        await using TestApi api = await Scripted(
+            async context =>
+            {
+                await release.Task;
+                await Status(503)(context);
+            },
+            Ok());
+        using var harness = new Harness(api.Origin);
+        Sighting sighting = harness.Sightings.Prepare(Request())!;
+        harness.Sightings.Record(sighting);
+        SetCount(harness.Sightings, sighting.Key, AgentSightings.MaxCount - 1);
+
+        Task flushing = harness.Sightings.FlushAsync();
+        await WaitUntil(() => api.Requests.Count == 1);
+        harness.Sightings.Record(sighting);
+        SetCount(harness.Sightings, sighting.Key, AgentSightings.MaxCount - 1);
+        release.SetResult(true);
+        await flushing;
+
+        Assert.Equal(AgentSightings.MaxCount, harness.Sightings.PendingCountFor(sighting.Key));
+        harness.Clock.Advance(1000);
+        await harness.Sightings.FlushAsync();
+        Assert.Equal(AgentSightings.MaxCount, Items(api.Requests[1]).Single().GetProperty("count").GetInt64());
+    }
+
+    [Fact]
     public async Task AKeptBatchKeepsItsFirstSeenTime()
     {
         await using TestApi api = await Scripted(Status(503), Ok());
@@ -1107,12 +1136,14 @@ public class AgentSightingsTest
     }
 
     [Fact]
-    public async Task OversizeSignatureHeadersAreLeftOutAndTheHostIsSentAsReceived()
+    public async Task OversizeSignatureHeadersAndHostAreLeftOut()
     {
         await using TestApi api = await Answering(ttl: 0);
         using var harness = new Harness(api.Origin);
         string huge = new('s', 4097);
-        ProxyRequest request = Request(host: huge);
+        // 4098 UTF-8 bytes in 2049 characters: the limit is on what is sent.
+        string wideHost = new('é', 2049);
+        ProxyRequest request = Request(host: wideHost);
         request.AddHeader("Signature", huge);
         request.AddHeader("Signature-Input", "sig1=()");
         request.AddHeader("Signature-Agent", huge);
@@ -1125,10 +1156,54 @@ public class AgentSightingsTest
         harness.Sightings.Report(request, "text/html");
         await harness.Sightings.FlushAsync();
         JsonElement item = Items(Assert.Single(api.Requests)).Single();
-        Assert.Equal(huge, item.GetProperty("host").GetString());
+        Assert.False(item.TryGetProperty("host", out _));
         Assert.False(item.TryGetProperty("signature", out _));
         Assert.False(item.TryGetProperty("signature_agent", out _));
         Assert.Equal("sig1=()", item.GetProperty("signature_input").GetString());
+    }
+
+    [Fact]
+    public async Task AHostAtTheLimitIsSentAsReceived()
+    {
+        await using TestApi api = await Answering(ttl: 0);
+        using var harness = new Harness(api.Origin);
+        string host = new('h', 4096);
+
+        harness.Sightings.Report(Request(host: host), "text/html");
+        await harness.Sightings.FlushAsync();
+
+        Assert.Equal(host, Items(Assert.Single(api.Requests)).Single().GetProperty("host").GetString());
+    }
+
+    [Fact]
+    public void AnOversizeMethodIsNotReported()
+    {
+        // Kestrel accepts a method token this long.
+        using var harness = new Harness("http://127.0.0.1:9");
+
+        harness.Sightings.Report(Request(method: new string('X', 4097)), "text/html");
+        Assert.Equal(0, harness.Sightings.PendingCount);
+        harness.Sightings.Report(Request(method: new string('X', 4096)), "text/html");
+        Assert.Equal(1, harness.Sightings.PendingCount);
+    }
+
+    [Fact]
+    public async Task LimitsAreOnTheUtf8BytesTheApiReceives()
+    {
+        await using TestApi api = await Answering(ttl: 0);
+        using var harness = new Harness(api.Origin);
+        // A lone surrogate goes out as U+FFFD, three bytes, and counts as three.
+        string over = new('\ud800', 1366);
+        string within = new('\ud800', 1365);
+
+        harness.Sightings.Report(Request(userAgent: over), "text/html");
+        Assert.Equal(0, harness.Sightings.PendingCount);
+        harness.Sightings.Report(Request(userAgent: within), "text/html");
+        await harness.Sightings.FlushAsync();
+
+        string sent = Items(Assert.Single(api.Requests)).Single().GetProperty("user_agent").GetString()!;
+        Assert.Equal(4095, Encoding.UTF8.GetByteCount(sent));
+        Assert.Equal(new string('�', 1365), sent);
     }
 
     [Theory]
