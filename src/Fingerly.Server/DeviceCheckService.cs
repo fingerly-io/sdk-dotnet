@@ -7,21 +7,22 @@ using System.Threading.Tasks;
 namespace Fingerly;
 
 /// <summary>
-/// Spends the Apple DeviceCheck token held for an iOS event, once, to read or
-/// to write the device's two bits. Reached as <c>fingerly.DeviceCheck</c>.
+/// Spends the Apple DeviceCheck tokens held for an iOS event, each once, to
+/// read and to write the device's two bits. Reached as <c>fingerly.DeviceCheck</c>.
 /// </summary>
 /// <remarks>
 /// <para>
-/// A token is held for one hour after an identification whose App Attest
-/// evidence covered it, and pays for one Apple call: a read or a write, never
-/// both. To read and then mark a device, read on one identification and write
-/// on the next.
+/// An identification whose App Attest evidence covered them holds a read
+/// token and a write token for one hour, and each pays for one Apple call: a
+/// read spends the read token, a write the write token. To read and then mark
+/// a device, read and write with the same request id.
 /// </para>
 /// <para>
 /// A call that answers <c>503 device_check_unavailable</c>, or that fails in
 /// transport or times out, is retried with the identical request: Apple lets
 /// a token be retried only for the same request, and the API answers
-/// <c>409 device_check_spent</c> to any other. No other answer is retried.
+/// <c>409 device_check_spent</c> to a second read, or to a write with other
+/// bits. No other answer is retried.
 /// </para>
 /// </remarks>
 public sealed class DeviceCheckService
@@ -37,7 +38,7 @@ public sealed class DeviceCheckService
     internal static TimeSpan RetryDelay(int attempt) => TimeSpan.FromMilliseconds(200 * attempt);
 
     /// <summary>
-    /// Reads the device's two bits from Apple, spending the event's token.
+    /// Reads the device's two bits from Apple, spending the event's read token.
     /// </summary>
     /// <param name="requestId">The <c>request_id</c> of an iOS identification made within the last hour.</param>
     /// <param name="cancellationToken">Cancels the call, retries included.</param>
@@ -58,8 +59,8 @@ public sealed class DeviceCheckService
     }
 
     /// <summary>
-    /// Sets bit0, bit1 or both with Apple, spending the event's token. A bit
-    /// left null keeps its value.
+    /// Sets bit0, bit1 or both with Apple, spending the event's write token. A
+    /// bit left null keeps its value.
     /// </summary>
     /// <param name="requestId">The <c>request_id</c> of an iOS identification made within the last hour.</param>
     /// <param name="bits">The bits to set; at least one must be non-null.</param>

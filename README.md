@@ -356,10 +356,11 @@ options leaves the keys out.
 
 ## DeviceCheck bits
 
-For an iOS identification whose App Attest evidence covered a DeviceCheck
-token, Fingerly holds the token for one hour, and your backend spends it once
-to read or to write the two bits Apple keeps for the device. The bits survive
-a reinstall and mean what you decide; Fingerly never reads them.
+For an iOS identification whose App Attest evidence covered its DeviceCheck
+tokens, Fingerly holds two tokens for one hour, one to read and one to write
+the two bits Apple keeps for the device, and your backend spends each once.
+The bits survive a reinstall and mean what you decide; Fingerly never reads
+them.
 
 ```csharp
 DeviceCheckBits bits = await fingerly.DeviceCheck.QueryAsync(requestId, ct);
@@ -369,15 +370,14 @@ DeviceCheckWriteResult set = await fingerly.DeviceCheck.WriteAsync(
     requestId, new DeviceCheckWrite { Bit0 = true }, ct);
 ```
 
-Apple treats a DeviceCheck token as single-use, so a read and a write each
-need their own identification. A once-per-device free trial takes two:
+Apple treats a DeviceCheck token as single-use, so one identification
+supports one read and one write. A once-per-device free trial does both on
+the identification that asks for the trial:
 
-1. On the identification that asks for the trial, call `QueryAsync`. If the
-   bit says the device already had one, refuse it.
+1. Call `QueryAsync`. If the bit says the device already had one, refuse it.
 2. Otherwise grant the trial and record the grant in your own data, so it
    holds even before the device is marked.
-3. On the next identification from that install (the app can identify again
-   right after the grant), call `WriteAsync` with `Bit0 = true`.
+3. Call `WriteAsync` with `Bit0 = true` and the same request id.
 
 ```csharp
 try
@@ -387,8 +387,14 @@ try
 }
 catch (FingerlyApiException e) when (e.Code == DeviceCheckErrors.NotHeld)
 {
-    // No token for this event: decide without the bits.
+    // No token for this event: decide without the bits, on your own records,
+    // and leave the device unmarked.
+    return "start-trial";
 }
+
+// Grant the trial in your own data, then mark the device.
+await fingerly.DeviceCheck.WriteAsync(requestId, new DeviceCheckWrite { Bit0 = true }, ct);
+return "start-trial";
 ```
 
 A write needs `Bit0`, `Bit1` or both; one with neither throws
@@ -408,7 +414,7 @@ compare `Code` with the `DeviceCheckErrors` constants:
 These two calls are the only ones the client retries: after a `503` or a
 transport failure or timeout it sends the identical request again, up to two
 more times. Apple lets a token be retried only for the same request, and the
-API answers `409 device_check_spent` to a retry with the other operation or
+API answers `409 device_check_spent` to a second read, or to a write with
 other bits. No other answer is retried. Never retry with a different request
 yourself; after a `device_check_spent`, use another identification.
 

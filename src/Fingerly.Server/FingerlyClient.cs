@@ -130,7 +130,7 @@ public sealed class FingerlyClient : IDisposable
 
     /// <summary>
     /// Reads and writes the Apple DeviceCheck bits of an iOS event's device,
-    /// by spending the token held for that event.
+    /// by spending the read and write tokens held for that event.
     /// </summary>
     public DeviceCheckService DeviceCheck { get; }
 

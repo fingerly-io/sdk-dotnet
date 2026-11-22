@@ -63,12 +63,13 @@ public sealed class DeviceCheckWriteResult
 /// </summary>
 public static class DeviceCheckErrors
 {
-    /// <summary><c>404</c>: no token is held for that event, or its hour has passed. Decide without the bits.</summary>
+    /// <summary><c>404</c>: no token is held for that call, or its hour has passed. Decide without the bits.</summary>
     public const string NotHeld = "device_check_not_held";
 
     /// <summary>
-    /// <c>409</c>: the token was already used, or a retry was not the same
-    /// request as the first attempt. Use another identification.
+    /// <c>409</c>: the call's token was already used, a read's by a read or a
+    /// write's by a write, or a retry was not the same request as the first
+    /// attempt. Use another identification.
     /// </summary>
     public const string Spent = "device_check_spent";
 
