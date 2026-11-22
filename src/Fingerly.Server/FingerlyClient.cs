@@ -32,7 +32,7 @@ namespace Fingerly;
 public sealed class FingerlyClient : IDisposable
 {
     /// <summary>The SDK version, reported to the API on every request.</summary>
-    public const string Version = "0.5.0";
+    public const string Version = "0.5.1";
 
     private const string UserAgentValue = "fingerly-dotnet/" + Version;
 
