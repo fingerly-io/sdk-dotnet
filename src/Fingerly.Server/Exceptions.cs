@@ -47,7 +47,8 @@ public class FingerlyException : Exception
 public class FingerlyApiException : FingerlyException
 {
     internal FingerlyApiException(
-        int status, string? code, JsonElement? details, string? requestId, int? retryAfter = null)
+        int status, string? code, JsonElement? details, string? requestId, int? retryAfter = null,
+        string? rateLimitScope = null)
         : base(Describe(status, code))
     {
         Status = status;
@@ -55,6 +56,7 @@ public class FingerlyApiException : FingerlyException
         Details = details;
         RequestId = requestId;
         RetryAfter = retryAfter;
+        RateLimitScope = rateLimitScope;
     }
 
     /// <summary>Creates an exception for a status the API reported.</summary>
@@ -153,6 +155,13 @@ public class FingerlyApiException : FingerlyException
     /// The SDK never retries by itself; a 429 carries this so you can.
     /// </remarks>
     public int? RetryAfter { get; }
+
+    /// <summary>
+    /// Which limit refused a <c>429</c>, from <c>Fingerly-RateLimit-Scope</c>,
+    /// or null when the answer named none. <see cref="RateLimitScopes.Daily"/>
+    /// is the organization's daily allowance, which renews at the next UTC day.
+    /// </summary>
+    public string? RateLimitScope { get; }
 
     private static string Describe(int status, string? code)
     {

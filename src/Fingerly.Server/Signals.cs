@@ -54,9 +54,6 @@ public static class Signals
     /// <summary>Detector: a commercial VPN endpoint.</summary>
     public const string VpnPublic = "vpn_public";
 
-    /// <summary>Detector: an address whose country disagrees with the device's timezone.</summary>
-    public const string VpnTimezone = "vpn_timezone";
-
     /// <summary>Detector: Apple's Private Relay and similar relays.</summary>
     public const string VpnRelay = "vpn_relay";
 
@@ -180,6 +177,9 @@ public static class Signals
     /// <summary>Group and detector: a report too thin to identify anyone.</summary>
     public const string FingerprintSuppressed = "fingerprint_suppressed";
 
+    /// <summary>Group and detector: a browser in a non-default, opt-in anti-fingerprinting mode that replaces audio, graphics, text metrics and locale readings with synthetic noise or empty answers.</summary>
+    public const string IdentityObfuscated = "identity_obfuscated";
+
     /// <summary>Group and detector: an open inspector or an attached debugger.</summary>
     public const string DeveloperTools = "developer_tools";
 
@@ -194,6 +194,9 @@ public static class Signals
 
     /// <summary>Detector: a client that says it is not a browser, or a known bad crawler.</summary>
     public const string BadBot = "bad_bot";
+
+    /// <summary>Detector: a client that names a known AI agent and arrives from outside the addresses that agent's operator publishes.</summary>
+    public const string AiSpoofed = "ai_spoofed";
 
     /// <summary>Detector: a browser report without <c>Sec-Fetch-*</c> headers from a browser that always sends them.</summary>
     public const string FetchMetadataMissing = "fetch_metadata_missing";

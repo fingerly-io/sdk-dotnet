@@ -64,6 +64,21 @@ public sealed class FingerlyProxy : IDisposable
         "Sec-CH-UA-Platform",
     };
 
+    /// <summary>
+    /// Web Bot Auth headers an AI agent's browser signs the request with, forwarded when
+    /// header-safe, non-blank and at most <see cref="MaxSignatureHeaderBytes"/>. The API
+    /// ignores a longer one, so it is dropped here rather than refused.
+    /// </summary>
+    private static readonly string[] SignatureHeaders =
+    {
+        "Signature",
+        "Signature-Input",
+        "Signature-Agent",
+    };
+
+    /// <summary>The longest Web Bot Auth header value forwarded, in bytes.</summary>
+    private const int MaxSignatureHeaderBytes = 4096;
+
     /// <summary>Statuses that must not carry a body.</summary>
     private static readonly HashSet<int> Bodiless = new() { 204, 205, 304 };
 
@@ -569,6 +584,16 @@ public sealed class FingerlyProxy : IDisposable
             string name = ForwardedClientHeaders[i];
             string? value = SafeNonBlank(request.Header(name));
             if (value is not null)
+            {
+                upstream.Headers.TryAddWithoutValidation(name, value);
+            }
+        }
+        for (int i = 0; i < SignatureHeaders.Length; i++)
+        {
+            string name = SignatureHeaders[i];
+            // A header-safe value is printable ASCII: one character per byte.
+            string? value = SafeNonBlank(request.Header(name));
+            if (value is not null && value.Length <= MaxSignatureHeaderBytes)
             {
                 upstream.Headers.TryAddWithoutValidation(name, value);
             }

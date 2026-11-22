@@ -23,6 +23,8 @@ await Expect<FingerlyException>(
 await Expect<FingerlyException>(() => fingerly.DeviceCheck.QueryAsync("r1"));
 await Expect<FingerlyException>(
     () => fingerly.DeviceCheck.WriteAsync("r1", new DeviceCheckWrite { Bit0 = true }));
+await Expect<FingerlyException>(() => fingerly.Agents.ReportSightingsAsync(
+    [new AgentSighting { UserAgent = "GPTBot/1.4", ClientIp = "203.0.113.7", Host = "shop.example" }]));
 
 Console.WriteLine(Webhooks.Verify(
     "whsec", Encoding.UTF8.GetBytes("{}"), "1800000000", "sha256=nope"));
@@ -44,6 +46,15 @@ var request = new ProxyRequest("POST", "/k7x2qm4a")
 request.AddHeader("X-API-Key", "fly_pk_production_trimcheck");
 request.AddHeader("Origin", "https://shop.example");
 Console.WriteLine((await proxy.HandleAsync(request)).Status);
+
+await using (var sightings = new AgentSightings(fingerly, new AgentSightingsOptions { ClientIp = _ => "203.0.113.7" }))
+{
+    var served = new ProxyRequest("GET", "/");
+    served.AddHeader("User-Agent", "GPTBot/1.4");
+    sightings.Report(served, "text/html");
+    await sightings.FlushAsync();
+    Console.WriteLine(sightings.Lookup(served).IsUnknown);
+}
 
 Console.WriteLine("trim check ok");
 

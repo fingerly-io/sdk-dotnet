@@ -1061,6 +1061,69 @@ public class FingerlyProxyTest
         Assert.Equal("\"macOS\"", sent.Header("Sec-CH-UA-Platform"));
     }
 
+    private const string Signature = "sig1=:dGVzdC1zaWduYXR1cmU=:";
+    private const string SignatureInput =
+        "sig1=(\"@authority\" \"signature-agent\");created=1735689600;keyid=\"k1\";alg=\"ed25519\";tag=\"web-bot-auth\"";
+    private const string SignatureAgent = "\"https://chatgpt.com\"";
+
+    private static ProxyRequest SignedPost(string signature, string agent)
+    {
+        ProxyRequest request = Post(ProxyPath, "{}");
+        request.AddHeader("X-API-Key", PublicKey);
+        request.AddHeader("Host", "shop.example");
+        request.AddHeader("X-Custom-Token", "app-header");
+        request.AddHeader("Signature", signature);
+        request.AddHeader("Signature-Input", SignatureInput);
+        request.AddHeader("Signature-Agent", agent);
+        return request;
+    }
+
+    [Fact]
+    public async Task ForwardsWebBotAuthHeadersUnchanged()
+    {
+        await using TestApi upstream = await TestApi.StartAsync(async context =>
+        {
+            context.Response.StatusCode = 200;
+            context.Response.ContentType = "application/json";
+            context.Response.Headers["X-Request-Id"] = "req-1";
+            context.Response.Headers["Fingerly-Balance-Micros"] = "100";
+            await context.Response.WriteAsync("""{"request_id":"req-1"}""");
+        });
+        using FingerlyProxy proxy = Proxy(upstream.Origin);
+
+        ProxyResponse result = await proxy.HandleAsync(SignedPost(Signature, SignatureAgent));
+
+        Assert.Equal(200, result.Status);
+        Assert.Equal(new[] { "req-1" }, Values(result, "X-Request-Id"));
+        Assert.Equal(new[] { "no-store" }, Values(result, "Cache-Control"));
+        Assert.Empty(Values(result, "Fingerly-Balance-Micros"));
+        Assert.Equal("""{"request_id":"req-1"}""", Encoding.UTF8.GetString(result.Body.ToArray()));
+        RecordedRequest sent = Assert.Single(upstream.Requests);
+        Assert.Equal(Signature, sent.Header("Signature"));
+        Assert.Equal(SignatureInput, sent.Header("Signature-Input"));
+        Assert.Equal(SignatureAgent, sent.Header("Signature-Agent"));
+        Assert.Equal("shop.example", sent.Header("X-Fingerly-Host"));
+        Assert.Null(sent.Header("X-Custom-Token"));
+    }
+
+    [Fact]
+    public async Task DropsAWebBotAuthHeaderOverFourKibibytes()
+    {
+        await using TestApi upstream = await TestApi.RespondAsync(200, "{}");
+        using FingerlyProxy proxy = Proxy(upstream.Origin);
+        string atCap = "\"https://" + new string('a', 4096 - 10) + "\"";
+        Assert.Equal(4096, atCap.Length);
+
+        ProxyResponse result = await proxy.HandleAsync(
+            SignedPost("sig1=:" + new string('A', 4097) + ":", atCap));
+
+        Assert.Equal(200, result.Status);
+        RecordedRequest sent = Assert.Single(upstream.Requests);
+        Assert.Null(sent.Header("Signature"));
+        Assert.Equal(SignatureInput, sent.Header("Signature-Input"));
+        Assert.Equal(atCap, sent.Header("Signature-Agent"));
+    }
+
     [Fact]
     public async Task RelaysRetryAfterOnConflictRequestInProgress()
     {
@@ -1109,6 +1172,11 @@ public class FingerlyProxyTest
         Assert.Equal(new[] { "Origin" }, Values(preflightResult, "Vary"));
         Assert.Contains(
             "x-fingerly-sdk-platform",
+            Values(preflightResult, "Access-Control-Allow-Headers").Single(),
+            StringComparison.Ordinal);
+        // The agent's browser adds the Web Bot Auth headers itself and never preflights them.
+        Assert.DoesNotContain(
+            "signature",
             Values(preflightResult, "Access-Control-Allow-Headers").Single(),
             StringComparison.Ordinal);
         Assert.Contains(

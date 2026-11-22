@@ -75,6 +75,8 @@ internal sealed class TestApi : IAsyncDisposable
             {
                 RemotePort = context.Connection.RemotePort,
             });
+            // The handler can read the body too.
+            context.Request.Body = new MemoryStream(body.ToArray());
             await handler(context);
         });
 

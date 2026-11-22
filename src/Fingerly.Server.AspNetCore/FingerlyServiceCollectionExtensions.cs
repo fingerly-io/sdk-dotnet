@@ -109,9 +109,68 @@ public static class FingerlyServiceCollectionExtensions
         });
         return services;
     }
+
+    /// <summary>
+    /// Registers <see cref="AgentSightings"/> for
+    /// <c>app.UseFingerlyAgentSightings()</c> and for lookups in your own code.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// A singleton: one answer cache and one pending buffer per process. It
+    /// reports with the secret key configured by <c>AddFingerly</c>, which
+    /// must be registered too, over the shared connection pool. Disposing the
+    /// service provider, as the host does at shutdown, sends what is pending.
+    /// </para>
+    /// <code>
+    /// builder.Services.AddFingerly(options => options.SecretKey = builder.Configuration["Fingerly:SecretKey"]!);
+    /// builder.Services.AddFingerlyAgentSightings(options =>
+    /// {
+    ///     options.ClientIp = request => request.Header("CF-Connecting-IP");
+    /// });
+    /// </code>
+    /// </remarks>
+    /// <param name="services">The collection to register with.</param>
+    /// <param name="configure">Sets the options; ClientIp is required.</param>
+    /// <returns>The same collection, for chaining.</returns>
+    /// <exception cref="ArgumentNullException">An argument is null.</exception>
+    public static IServiceCollection AddFingerlyAgentSightings(
+        this IServiceCollection services, Action<AgentSightingsOptions> configure)
+    {
+        if (services is null)
+        {
+            throw new ArgumentNullException(nameof(services));
+        }
+        if (configure is null)
+        {
+            throw new ArgumentNullException(nameof(configure));
+        }
+
+        services.Configure(configure);
+        services.AddSingleton(provider =>
+        {
+            ILogger logger = provider.GetService<ILoggerFactory>()?.CreateLogger("Fingerly.AgentSightings")
+                ?? NullLogger.Instance;
+            // Its own client over the shared pool, not the factory's transient
+            // one: a singleton holding that would pin one handler for ever.
+            var client = new FingerlyClient(provider.GetRequiredService<IOptions<FingerlyOptions>>().Value);
+            try
+            {
+                return new AgentSightings(
+                    client, provider.GetRequiredService<IOptions<AgentSightingsOptions>>().Value,
+                    ownsClient: true, fallbackLog: line => ProxyLog.UpstreamFailed(logger, line),
+                    now: null, utcNow: null, startTimer: true);
+            }
+            catch
+            {
+                client.Dispose();
+                throw;
+            }
+        });
+        return services;
+    }
 }
 
-/// <summary>The proxy's one log message, defined once so it costs nothing when disabled.</summary>
+/// <summary>The SDK's one log message, defined once so it costs nothing when disabled.</summary>
 internal static partial class ProxyLog
 {
     [LoggerMessage(EventId = 1, Level = LogLevel.Warning, Message = "{Line}")]

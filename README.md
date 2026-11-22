@@ -35,8 +35,8 @@ scores how suspicious it is.
 2. **Install.**
 
    ```sh
-   dotnet add package Fingerly.Server --version 0.4.1
-   dotnet add package Fingerly.Server.AspNetCore --version 0.4.1   # for the proxy and DI
+   dotnet add package Fingerly.Server --version 0.5.0
+   dotnet add package Fingerly.Server.AspNetCore --version 0.5.0   # for the proxy and DI
    ```
 
 3. **Read an event.**
@@ -96,15 +96,16 @@ Full guide: [docs.fingerly.io/docs/sdks/dotnet](https://docs.fingerly.io/docs/sd
 | Read or write the DeviceCheck bits of an iOS device | `DeviceCheck.QueryAsync` / `WriteAsync` | [DeviceCheck bits](#devicecheck-bits) |
 | Check a webhook delivery is genuine | `Webhooks.Verify` and `Webhooks.Parse` | [Verify webhooks](#verify-webhooks) |
 | Keep the browser SDK first-party, away from content blockers | `AddFingerlyProxy` with `MapFingerlyProxy` or `UseFingerlyProxy` | [First-party proxy](#first-party-proxy-same-origin) |
+| See AI crawlers that never run JavaScript, and ask what sent a request | `AddFingerlyAgentSightings` with `UseFingerlyAgentSightings` and `Lookup` | [AI crawlers on your server](#ai-crawlers-on-your-server) |
 
-On this page: [Packages](#packages) · [Read events](#read-events) · [DeviceCheck bits](#devicecheck-bits) · [Verify webhooks](#verify-webhooks) · [First-party proxy](#first-party-proxy-same-origin) · [Deadlines, limits and connections](#deadlines-limits-and-connections) · [Requirements](#requirements) · [Development](#development-and-release-preparation) · [Documentation](#documentation) · [Help](#help) · [Licence](#licence)
+On this page: [Packages](#packages) · [Read events](#read-events) · [DeviceCheck bits](#devicecheck-bits) · [Verify webhooks](#verify-webhooks) · [First-party proxy](#first-party-proxy-same-origin) · [AI crawlers on your server](#ai-crawlers-on-your-server) · [Deadlines, limits and connections](#deadlines-limits-and-connections) · [Requirements](#requirements) · [Development](#development-and-release-preparation) · [Documentation](#documentation) · [Help](#help) · [Licence](#licence)
 
 ## Packages
 
 | Package | Contains | For |
 | --- | --- | --- |
 | `Fingerly.Server` | client, webhooks, proxy core | everything |
-| `Fingerly.Server.AspNetCore` | middleware, endpoint routing, DI | the proxy |
+| `Fingerly.Server.AspNetCore` | middleware, endpoint routing, DI | the proxy and agent sightings |
 
 `Fingerly.Server` targets `net8.0` and `netstandard2.0`. On `net8.0` it has no
 dependencies at all, because `System.Text.Json` is part of the shared
@@ -146,6 +147,28 @@ EventPage page = await fingerly.Events.ListAsync(
 `Event.ProjectId` is the UUID of the Fingerly project the event belongs to, on
 `GetAsync` and on every `ListAsync` row; it is null when an older server does
 not send it.
+
+`Event.Ai` is set only when `Event.VisitorKind` is `VisitorKinds.AiBot`, and
+null otherwise: an `AiAgent` with the agent's `Name`, `Provider`, `Purpose`,
+`Runtime`, `Declared` and `Verification`. The agent is named by a Web Bot Auth
+signature when the request carried one, otherwise by its user agent.
+`Verification` says how far that was checked:
+`AiVerificationMethods.Signature` (the operator's published key signed the
+request) or `AiVerificationMethods.IpList` (the address is inside the
+operator's published ranges), with result `AiVerificationResults.Pass`,
+`AiVerificationResults.Fail` (the name was borrowed), or
+`AiVerificationResults.NotAttempted` with method `AiVerificationMethods.None`
+(the operator publishes nothing to check against, or it could not be checked;
+the name is then only the client's claim). Only clients that run the Fingerly
+SDK produce events, so crawlers that do not run JavaScript never appear. `EventListOptions`
+filters on `Kind`, `AiProvider` (exact and case-sensitive, such as `OpenAI`)
+and `AiPurpose`.
+
+```csharp
+EventPage fetches = await fingerly.Events.ListAsync(
+    new EventListOptions { Kind = VisitorKinds.AiBot, AiPurpose = AiPurposes.UserFetch },
+    cancellationToken);
+```
 
 `Raw` keeps the response body exactly as it arrived, so a field the API adds
 later is reachable without an SDK upgrade.
@@ -213,7 +236,9 @@ they never collide with the properties they describe (or with
 | `SuspectLevels` | `Event.SuspectLevel` and `EventListOptions.Level` |
 | `Confidences` | `EventTrigger.Confidence` |
 | `EventStates`, `Environments`, `Platforms` | `Event.State`, `Event.Environment`, `Event.Platform` |
-| `AnonymityNetworks`, `DeviceKinds`, `VisitorKinds` | `Event.AnonymityNetwork`, `Event.DeviceKind`, `Event.VisitorKind` |
+| `AnonymityNetworks`, `DeviceKinds`, `VisitorKinds` | `Event.AnonymityNetwork`, `Event.DeviceKind`, `Event.VisitorKind` and `EventListOptions.Kind`, and `AgentAnswer.VisitorKind` (only there `VisitorKinds.Unknown`) |
+| `AiPurposes`, `AiRuntimes` | `AiAgent.Purpose` (and `EventListOptions.AiPurpose`), `AiAgent.Runtime` |
+| `AiVerificationMethods`, `AiVerificationResults` | `AiVerification.Method`, `AiVerification.Result` |
 | `AttestationStates`, `AttestationStatuses`, `AttestSkippedReasons` | the archived document's `attestation.state`, `attestation.status` and `attestation.attest_skipped` |
 | `VerifyReasons` | `VerifyResult.Reason` |
 | `WebhookEventTypes`, `WebhookEnvironments` | `WebhookEvent.Type`, `WebhookEvent.Environment` |
@@ -331,10 +356,11 @@ options leaves the keys out.
 
 ## DeviceCheck bits
 
-For an iOS identification whose App Attest evidence covered a DeviceCheck
-token, Fingerly holds the token for one hour, and your backend spends it once
-to read or to write the two bits Apple keeps for the device. The bits survive
-a reinstall and mean what you decide; Fingerly never reads them.
+For an iOS identification whose App Attest evidence covered its DeviceCheck
+tokens, Fingerly holds two tokens for one hour, one to read and one to write
+the two bits Apple keeps for the device, and your backend spends each once.
+The bits survive a reinstall and mean what you decide; Fingerly never reads
+them.
 
 ```csharp
 DeviceCheckBits bits = await fingerly.DeviceCheck.QueryAsync(requestId, ct);
@@ -344,15 +370,14 @@ DeviceCheckWriteResult set = await fingerly.DeviceCheck.WriteAsync(
     requestId, new DeviceCheckWrite { Bit0 = true }, ct);
 ```
 
-Apple treats a DeviceCheck token as single-use, so a read and a write each
-need their own identification. A once-per-device free trial takes two:
+Apple treats a DeviceCheck token as single-use, so one identification
+supports one read and one write. A once-per-device free trial does both on
+the identification that asks for the trial:
 
-1. On the identification that asks for the trial, call `QueryAsync`. If the
-   bit says the device already had one, refuse it.
+1. Call `QueryAsync`. If the bit says the device already had one, refuse it.
 2. Otherwise grant the trial and record the grant in your own data, so it
    holds even before the device is marked.
-3. On the next identification from that install (the app can identify again
-   right after the grant), call `WriteAsync` with `Bit0 = true`.
+3. Call `WriteAsync` with `Bit0 = true` and the same request id.
 
 ```csharp
 try
@@ -362,8 +387,14 @@ try
 }
 catch (FingerlyApiException e) when (e.Code == DeviceCheckErrors.NotHeld)
 {
-    // No token for this event: decide without the bits.
+    // No token for this event: decide without the bits, on your own records,
+    // and leave the device unmarked.
+    return "start-trial";
 }
+
+// Grant the trial in your own data, then mark the device.
+await fingerly.DeviceCheck.WriteAsync(requestId, new DeviceCheckWrite { Bit0 = true }, ct);
+return "start-trial";
 ```
 
 A write needs `Bit0`, `Bit1` or both; one with neither throws
@@ -383,7 +414,7 @@ compare `Code` with the `DeviceCheckErrors` constants:
 These two calls are the only ones the client retries: after a `503` or a
 transport failure or timeout it sends the identical request again, up to two
 more times. Apple lets a token be retried only for the same request, and the
-API answers `409 device_check_spent` to a retry with the other operation or
+API answers `409 device_check_spent` to a second read, or to a write with
 other bits. No other answer is retried. Never retry with a different request
 yourself; after a `device_check_spent`, use another identification.
 
@@ -492,8 +523,8 @@ const fingerly = await load({ apiKey: 'fly_pk_…', endpoints: '/k7x2qm4a' })
 | Public key | On every request the caller's `X-API-Key` must be a public key, `fly_pk_…`, from the same environment as the proxy key. Anything else (no header, another environment, a secret `fly_sk_` key) gets `401` as `text/plain; charset=utf-8` with `Cache-Control: no-store`, and nothing is forwarded. Upstream receives `X-Fingerly-Proxy-Key` plus that public key as `X-API-Key`; a secret key is never sent. |
 | Origin | A request without either `Origin` or a validated native `X-Fingerly-SDK-Platform` header (listed below) is rejected locally with `400` (`missing_origin`), and `X-Fingerly-Origin` is never synthesized from `Host`, `Referer` or the request URL. Only one channel goes upstream: when `Origin` is present it is sent as `X-Fingerly-Origin` and the platform header is dropped, as the API's direct path treats such a request as a browser one. |
 | Body size | Bodies over 1 MiB get `413`, enforced while reading rather than after buffering. |
-| Forwarded upstream | All incoming `X-Fingerly-*`, `Cookie`, `Authorization` and trace-context headers are stripped, restoring only a validated `X-Fingerly-SDK-Platform` (for a request without `Origin`) alongside `X-Fingerly-Host`, `Idempotency-Key`, `Sec-Fetch-*` and `Sec-CH-UA-*`. |
-| Proxy identity | The proxy reports itself upstream as `dotnet/0.4.1`, which the dashboard shows per proxy. |
+| Forwarded upstream | All incoming `X-Fingerly-*`, `Cookie`, `Authorization` and trace-context headers are stripped, restoring only a validated `X-Fingerly-SDK-Platform` (for a request without `Origin`) alongside `X-Fingerly-Host`, `Idempotency-Key`, `Sec-Fetch-*`, `Sec-CH-UA-*` and the Web Bot Auth `Signature`, `Signature-Input` and `Signature-Agent` (each dropped when over 4096 bytes). |
+| Proxy identity | The proxy reports itself upstream as `dotnet/0.5.0`, which the dashboard shows per proxy. |
 | Relayed back | Only `Content-Type`, `X-Request-Id`, `RateLimit-Limit`, `RateLimit-Remaining` and `Retry-After`, with `Cache-Control: no-store` added. |
 | Upstream timeout | `504` ("Gateway timeout") if the upstream did not answer within `Timeout` (5 seconds by default). |
 | Other upstream failures | `502` ("Bad gateway") for anything else: refused, reset, truncated, larger than 4 MiB, undecodable, a redirect (never followed), or a status outside 200 to 599. |
@@ -549,6 +580,105 @@ so an isolated-worker Azure Function, a YARP transform or an OWIN pipeline can
 mount it by translating those two shapes. Where that host routes only the one
 path to it, `Path` can stay unset. That is also why the core still runs on
 .NET Standard 2.0.
+
+## AI crawlers on your server
+
+AI crawlers and fetchers such as GPTBot or ClaudeBot mostly fetch pages
+without running their JavaScript, so the browser SDK never sees them.
+`AgentSightings` reports the requests your server served to Fingerly, which
+says what sent each one, and remembers the answers so your code can ask. The
+console shows the reported traffic by agent.
+
+```csharp
+builder.Services.AddFingerly(options => options.SecretKey = builder.Configuration["Fingerly:SecretKey"]!);
+builder.Services.AddFingerlyAgentSightings(options =>
+{
+    // The same trusted address the proxy uses. Behind a CDN, its header;
+    // otherwise the connection's peer.
+    options.ClientIp = request => request.Header("CF-Connecting-IP") ?? request.RemoteAddress;
+});
+var app = builder.Build();
+app.UseFingerlyAgentSightings(); // first, so it sees every response
+```
+
+By default it reports every response with a `text/html` or
+`application/xhtml+xml` content type, and every request for `/robots.txt`,
+`/llms.txt` and `/llms-full.txt`, whatever its status. Static assets, API
+routes and health checks are left out unless you add them. Change that with
+`ContentTypes` (replaces the default list), `IncludePathPrefixes` and
+`ExcludePathPrefixes` (an exclusion wins). Paths are matched within your
+application, as the proxy matches them: without what `UsePathBase`, `Map` or
+an IIS virtual directory adds. Which responses are reported depends
+on your own path and content type only, never on the user agent or anything
+else the visitor sent.
+
+Ask what sent a request with `Lookup`, and compare against the named values:
+
+```csharp
+app.MapGet("/articles/{id}", (string id, HttpContext context, AgentSightings sightings) =>
+{
+    AgentAnswer answer = sightings.Lookup(context);
+    if (answer.VisitorKind == VisitorKinds.AiBot && answer.Ai?.Purpose == AiPurposes.Training)
+    {
+        // Your own policy for training crawlers.
+    }
+    return Results.Ok(id);
+});
+```
+
+`Lookup` answers from memory only and never throws. Until the server has
+answered for that user agent, address and `Signature-Agent`, or once that
+answer has expired, it returns `AgentAnswer.Unknown` (`IsUnknown` is true, and
+its `VisitorKind` is empty, so it matches none of `VisitorKinds`): serve the
+request as usual. `VisitorKind` is never null, so it can be read without a
+check; `Agent` and `Ai` are null when the server named no agent.
+A signed request is checked on every report, so its answer is never
+remembered. Neither is the answer for a request the server could not use
+(`VisitorKinds.Unknown`, ttl 0), so that request stays `AgentAnswer.Unknown`
+while the rest of its batch is answered as usual. `answer.Ai.Verification` says how far the agent's name was
+checked: a `Pass` means the operator's key or published ranges confirmed it, a
+`Fail` means the name was borrowed, and `NotAttempted` leaves it the client's
+claim.
+
+What happens behind it:
+
+- **Never in the way.** The middleware reports in an `OnCompleted` callback,
+  after the response has been sent, and in memory only. A background timer
+  sends the reports, in batches of up to 200, when 200 are pending, when they
+  reach 64 KiB, or 2 seconds after the oldest, one batch at a time, each within
+  5 seconds. The timer does not keep the process alive.
+- **Bounded memory.** At most `Capacity` answers (4096 by default, about
+  1.5 MB; a larger value is held to 65536, about 25 MB), least recently used
+  first out, and at most 1000 requests pending or in flight. Repeats of the
+  same request are sent once with a count. When 1000 are held, a new request
+  is not reported and `DroppedCount` goes up.
+- **Fail open.** A refused or failed report never reaches a visitor. A rate
+  limit pauses reporting until `Retry-After`, for at most 24 hours; a wrong or revoked key drops the
+  batch and pauses for a minute; a `503` or an API that cannot be reached is
+  retried with backoff from 1 to 60 seconds; a `422` (no item in the batch
+  was usable), any other refusal, and a report
+  that timed out after it was sent, is dropped, so nothing is counted twice.
+  Each is logged at most once a minute through `ILogger`, and so is a
+  `ClientIp` that gave no single address.
+- **What is sent.** For each request: the `User-Agent`, the address from
+  `ClientIp`, the `Host`, the method, the `Signature`, `Signature-Input` and
+  `Signature-Agent` headers when present, and a count. Limits are 4096 UTF-8
+  bytes as sent: a request whose `User-Agent` or method is longer is not
+  reported, and a longer `Host` or signature header is left out. Never the path, the query string, cookies, `Authorization`,
+  other headers, the body or the response, and none of these is logged.
+- **Shutdown.** Disposing `AgentSightings`, as the host does when it stops,
+  sends what is pending within 5 seconds. Where a process can end without
+  warning, such as a serverless function, call `await sightings.FlushAsync()`
+  before it returns.
+
+Outside ASP.NET Core, build `new AgentSightings(fingerly, options)` once, call
+`sightings.Report(request, responseContentType)` with a `ProxyRequest` after
+each response, and `sightings.Lookup(request)` wherever you need the answer.
+Dispose it when the process stops (`await sightings.DisposeAsync()`, before the
+client), which sends what is pending; without that, the requests still pending
+when the process ends are not reported.
+`fingerly.Agents.ReportSightingsAsync` is the single call underneath, for a
+host that batches by itself.
 
 ## Deadlines, limits and connections
 
@@ -625,7 +755,9 @@ in; it also verifies and consumes events, with `VerifyOptions`,
 `NamedValues.cs` hold the named string values. `DeviceCheckService` spends held DeviceCheck tokens, with
 `DeviceCheckBits`, `DeviceCheckWrite` and `DeviceCheckWriteResult`. `Webhooks` verifies signatures. `FingerlyProxy` holds every proxy decision,
 with `ProxyRequest` and `ProxyResponse` as the neutral shapes the hosts
-translate to. `SharedHttp` is the process-wide connection pool and reads every
+translate to. `AgentsService` sends one report of served requests;
+`AgentSightings` batches them and remembers the answers, with `Sighting`
+computing the cache key. `SharedHttp` is the process-wide connection pool and reads every
 answer within its limit. `Keys` validates every caller-supplied option before
 any network access, and `Json` keeps the serializer context in one place so a
 caller's own `JsonSerializerOptions` cannot change how responses are read.
