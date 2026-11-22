@@ -27,7 +27,7 @@ public class NamedValuesTest
         "ip_abuser", "datacenter_ip", "bogon_ip", "anycast_ip", "incognito", "bad_bot",
         "ai_spoofed", "automation", "fetch_metadata_missing", "web_ticket_missing", "web_ticket_invalid",
         "antidetect_browser", "virtual_machine", "fingerprint_suppressed", "identity_obfuscated", "privacy_settings",
-        "embedded_web_view", "remote_control", "emulator", "root_apps", "app_cloner",
+        "embedded_web_view", "remote_control", "emulator", "root_apps", "bootloader_unlocked", "app_cloner",
         "jailbreak", "simulator", "frida", "mitm_attack", "active_call", "attestation_missing",
         "attestation_downgrade", "repeated_reinstall", "device_activity_high",
         "device_activity_very_high", "play_device_integrity_failed", "play_app_unrecognized",
@@ -39,7 +39,7 @@ public class NamedValuesTest
     {
         "tor", "datacenter_proxy", "residential_proxy", "vpn", "ip_blocklist", "ip_reputation",
         "network_anomaly", "location_spoofing", "ios_simulator", "android_emulator",
-        "virtual_machine", "jailbroken_device", "rooted_device", "cloned_app", "device_farm",
+        "virtual_machine", "jailbroken_device", "rooted_device", "bootloader_unlocked", "cloned_app", "device_farm",
         "mitm_attack", "frida_detected", "browser_tampering", "fingerprint_suppressed",
         "identity_obfuscated", "developer_tools", "remote_control", "bot", "high_activity", "incognito_mode",
         "privacy_settings", "embedded_web_view", "active_call", "attestation_missing",
@@ -82,7 +82,7 @@ public class NamedValuesTest
     public void SignalsCoverEveryServerDetectorAndGroup()
     {
         string[] expected = ServerDetectors.Union(ServerGroups).ToArray();
-        Assert.Equal(74, expected.Length);
+        Assert.Equal(75, expected.Length);
         AssertConstants(typeof(Signals), expected);
     }
 

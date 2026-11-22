@@ -129,6 +129,9 @@ public static class Signals
     /// <summary>Detector: a rooted Android device.</summary>
     public const string RootApps = "root_apps";
 
+    /// <summary>Group and detector: an Android device with an unlocked bootloader or an operating system its manufacturer did not sign.</summary>
+    public const string BootloaderUnlocked = "bootloader_unlocked";
+
     /// <summary>Detector: Play Integrity says the device meets no device, strong or virtual integrity.</summary>
     public const string PlayDeviceIntegrityFailed = "play_device_integrity_failed";
 
