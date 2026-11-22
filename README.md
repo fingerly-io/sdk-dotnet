@@ -622,7 +622,8 @@ app.MapGet("/articles/{id}", (string id, HttpContext context, AgentSightings sig
 answered for that user agent, address and `Signature-Agent`, or once that
 answer has expired, it returns `AgentAnswer.Unknown` (`IsUnknown` is true, and
 its `VisitorKind` is empty, so it matches none of `VisitorKinds`): serve the
-request as usual.
+request as usual. `VisitorKind` is never null, so it can be read without a
+check; `Agent` and `Ai` are null when the server named no agent.
 A signed request is checked on every report, so its answer is never
 remembered. `answer.Ai.Verification` says how far the agent's name was
 checked: a `Pass` means the operator's key or published ranges confirmed it, a
@@ -661,6 +662,9 @@ What happens behind it:
 Outside ASP.NET Core, build `new AgentSightings(fingerly, options)` once, call
 `sightings.Report(request, responseContentType)` with a `ProxyRequest` after
 each response, and `sightings.Lookup(request)` wherever you need the answer.
+Dispose it when the process stops (`await sightings.DisposeAsync()`, before the
+client), which sends what is pending; without that, the requests still pending
+when the process ends are not reported.
 `fingerly.Agents.ReportSightingsAsync` is the single call underneath, for a
 host that batches by itself.
 
