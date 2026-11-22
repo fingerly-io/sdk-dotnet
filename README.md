@@ -643,7 +643,7 @@ What happens behind it:
   same request are sent once with a count. When 1000 are held, a new request
   is not reported and `DroppedCount` goes up.
 - **Fail open.** A refused or failed report never reaches a visitor. A rate
-  limit pauses reporting until `Retry-After`; a wrong or revoked key drops the
+  limit pauses reporting until `Retry-After`, for at most 24 hours; a wrong or revoked key drops the
   batch and pauses for a minute; a `503` or an API that cannot be reached is
   retried with backoff from 1 to 60 seconds; any other refusal, and a report
   that timed out after it was sent, is dropped, so nothing is counted twice.

@@ -803,6 +803,21 @@ public class AgentSightingsTest
     }
 
     [Theory]
+    [InlineData("2147483647")]
+    [InlineData("86401")]
+    [InlineData("Fri, 01 Jan 2100 00:00:00 GMT")]
+    public async Task ARetryAfterOverOneDayIsHeldToOneDay(string retryAfter)
+    {
+        await using TestApi api = await Scripted(Status(429, retryAfter: retryAfter));
+        using var harness = new Harness(api.Origin);
+        harness.Sightings.Report(Request(), "text/html");
+        await harness.Sightings.FlushAsync();
+
+        Assert.Equal(86_400_000, harness.Sightings.PausedForMs);
+        Assert.Equal(1, harness.Sightings.PendingCount);
+    }
+
+    [Theory]
     [InlineData(401)]
     [InlineData(403)]
     public async Task AWrongKeyDropsTheBatchAndPausesAMinute(int status)

@@ -61,6 +61,7 @@ public sealed class AgentSightings : IDisposable
     private const long LogEveryMs = 60_000;
     private const long MaxBackoffMs = 60_000;
     private const long MaxTtlSeconds = 86_400;
+    private const long MaxRetryAfterSeconds = 86_400;
 
     private static readonly string[] WellKnownPaths = ["/robots.txt", "/llms.txt", "/llms-full.txt"];
     private static readonly string[] DefaultContentTypes = ["text/html", "application/xhtml+xml"];
@@ -696,8 +697,11 @@ public sealed class AgentSightings : IDisposable
         int status = refused.Status;
         if (status == 429)
         {
-            long seconds = refused.RetryAfter
-                ?? (refused.RateLimitScope == RateLimitScopes.Daily ? SecondsToNextUtcDay() : 60);
+            // Held to one day: the daily allowance renews within one, and a
+            // larger value (a box in front of the API) would stop reporting
+            // for the life of the process.
+            long seconds = Math.Min(MaxRetryAfterSeconds, refused.RetryAfter
+                ?? (refused.RateLimitScope == RateLimitScopes.Daily ? SecondsToNextUtcDay() : 60));
             lock (_gate)
             {
                 MergeBack(batch);
