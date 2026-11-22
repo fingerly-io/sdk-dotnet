@@ -600,7 +600,9 @@ By default it reports every response with a `text/html` or
 `/llms.txt` and `/llms-full.txt`, whatever its status. Static assets, API
 routes and health checks are left out unless you add them. Change that with
 `ContentTypes` (replaces the default list), `IncludePathPrefixes` and
-`ExcludePathPrefixes` (an exclusion wins). Which responses are reported depends
+`ExcludePathPrefixes` (an exclusion wins). Paths are matched within your
+application, as the proxy matches them: without what `UsePathBase`, `Map` or
+an IIS virtual directory adds. Which responses are reported depends
 on your own path and content type only, never on the user agent or anything
 else the visitor sent.
 

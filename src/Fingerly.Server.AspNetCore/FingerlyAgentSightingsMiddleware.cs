@@ -49,7 +49,11 @@ public sealed class FingerlyAgentSightingsMiddleware
         {
             throw new ArgumentNullException(nameof(context));
         }
-        context.Response.OnCompleted(_report, context);
+        // The method and path are taken now: UsePathBase, Map and a
+        // re-executing exception handler put the original path back once
+        // the pipeline returns, before OnCompleted runs.
+        context.Response.OnCompleted(
+            _report, new Served(context, context.Request.Method, SightingsExchange.PathOf(context)));
         return _next(context);
     }
 
@@ -57,10 +61,11 @@ public sealed class FingerlyAgentSightingsMiddleware
     {
         try
         {
-            var context = (HttpContext)state;
-            if (_sightings.InScope(SightingsExchange.PathOf(context), context.Response.ContentType))
+            var served = (Served)state;
+            HttpContext context = served.Context;
+            if (_sightings.InScope(served.Path, context.Response.ContentType))
             {
-                Sighting? sighting = SightingsExchange.Prepared(context, _sightings);
+                Sighting? sighting = SightingsExchange.Prepared(context, _sightings, served.Method, served.Path);
                 if (sighting is not null)
                 {
                     _sightings.Record(sighting);
@@ -73,6 +78,23 @@ public sealed class FingerlyAgentSightingsMiddleware
         {
         }
         return Task.CompletedTask;
+    }
+
+    /// <summary>A request as it entered the middleware.</summary>
+    private sealed class Served
+    {
+        internal Served(HttpContext context, string method, string path)
+        {
+            Context = context;
+            Method = method;
+            Path = path;
+        }
+
+        internal HttpContext Context { get; }
+
+        internal string Method { get; }
+
+        internal string Path { get; }
     }
 }
 
@@ -89,22 +111,29 @@ internal static class SightingsExchange
     /// and the report afterwards hash it once and call the client IP callback
     /// once.
     /// </summary>
-    internal static Sighting? Prepared(HttpContext context, AgentSightings sightings)
+    internal static Sighting? Prepared(HttpContext context, AgentSightings sightings) =>
+        Prepared(context, sightings, context.Request.Method, PathOf(context));
+
+    /// <summary>
+    /// The request prepared once per request, described with the method and
+    /// path given rather than the ones the context holds now.
+    /// </summary>
+    internal static Sighting? Prepared(HttpContext context, AgentSightings sightings, string method, string path)
     {
         if (context.Items.TryGetValue(ItemKey, out object? held) && held is Holder holder
             && ReferenceEquals(holder.Owner, sightings))
         {
             return holder.Value;
         }
-        Sighting? prepared = sightings.Prepare(RequestOf(context));
+        Sighting? prepared = sightings.Prepare(RequestOf(context, method, path));
         context.Items[ItemKey] = new Holder(sightings, prepared);
         return prepared;
     }
 
     /// <summary>The request as the core describes it: method, path, peer and headers, no body.</summary>
-    internal static ProxyRequest RequestOf(HttpContext context)
+    internal static ProxyRequest RequestOf(HttpContext context, string method, string path)
     {
-        var request = new ProxyRequest(context.Request.Method, PathOf(context))
+        var request = new ProxyRequest(method, path)
         {
             RemoteAddress = ProxyExchange.PeerOf(context),
         };

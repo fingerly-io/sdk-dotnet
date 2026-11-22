@@ -105,6 +105,58 @@ public class AgentSightingsMiddlewareTest
     }
 
     [Fact]
+    public async Task MatchesTheApplicationRelativePathUnderAPathBase()
+    {
+        // UsePathBase and Map put the original path back once the pipeline
+        // returns, before the report runs; the rules are on the path within
+        // the application, as the proxy's are.
+        await using TestApi api = await TestApi.StartAsync(context => AnswerEach(context));
+        await using TestSite site = await TestSite.StartAsync(
+            services =>
+            {
+                services.AddFingerly(options =>
+                {
+                    options.SecretKey = SecretKey;
+                    options.Endpoint = api.Origin;
+                    options.AllowInsecureLoopback = true;
+                });
+                services.AddFingerlyAgentSightings(options =>
+                {
+                    options.ClientIp = request => request.RemoteAddress;
+                    options.ExcludePathPrefixes = ["/health"];
+                });
+            },
+            app =>
+            {
+                app.UsePathBase("/blog");
+                app.Map("/docs", docs =>
+                {
+                    docs.UseFingerlyAgentSightings();
+                    docs.Run(context =>
+                    {
+                        context.Response.ContentType = context.Request.Path == "/robots.txt" ? "text/plain" : "text/html";
+                        return context.Response.WriteAsync("ok");
+                    });
+                });
+                app.UseFingerlyAgentSightings();
+                app.MapGet("/robots.txt", () => Results.Content("User-agent: *", "text/plain"));
+                app.MapGet("/health", () => Results.Content("<p>ok</p>", "text/html"));
+            });
+
+        foreach (string path in new[] { "/blog/robots.txt", "/blog/health", "/blog/docs/robots.txt", "/blog/docs/health" })
+        {
+            using HttpResponseMessage response = await Get(site, path, "agent " + path);
+            Assert.True(response.IsSuccessStatusCode, path);
+        }
+        AgentSightings sightings = site.Services.GetRequiredService<AgentSightings>();
+        await Flushed(sightings, api, 2);
+        await Task.Delay(200);
+        await sightings.FlushAsync();
+
+        Assert.Equal(new[] { "agent /blog/docs/robots.txt", "agent /blog/robots.txt" }, UserAgentsSent(api));
+    }
+
+    [Fact]
     public async Task LooksUpTheAnswerForARequest()
     {
         await using TestApi api = await TestApi.StartAsync(context => AnswerEach(context));
