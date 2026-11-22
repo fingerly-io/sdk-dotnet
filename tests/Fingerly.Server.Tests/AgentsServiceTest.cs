@@ -207,6 +207,7 @@ public class AgentsServiceTest
         Assert.DoesNotContain(AgentAnswer.Unknown.VisitorKind, new[]
         {
             VisitorKinds.Human, VisitorKinds.AiBot, VisitorKinds.Automation, VisitorKinds.SearchCrawler,
+            VisitorKinds.Unknown,
         });
     }
 }

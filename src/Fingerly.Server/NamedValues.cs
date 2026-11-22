@@ -275,6 +275,12 @@ public static class VisitorKinds
 
     /// <summary>A named search engine's crawler.</summary>
     public const string SearchCrawler = "search_crawler";
+
+    /// <summary>
+    /// Only in an agent sightings answer: a request the server could not use;
+    /// ttl 0, never remembered.
+    /// </summary>
+    public const string Unknown = "unknown";
 }
 
 /// <summary>

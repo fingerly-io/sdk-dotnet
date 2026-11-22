@@ -725,9 +725,10 @@ public sealed class AgentSightings : IDisposable
             LogThrottled("auth", "the API refused the secret key (HTTP " + status + "); the key is wrong or revoked");
             return Outcome.Dropped;
         }
-        // 422 is an SDK bug, and so is any other answer the table does not
-        // name (500, 502, 504, 413, other 4xx): the server may have acted on
-        // part of it, so it is never retried.
+        // 422 (no item in the batch was usable) is an SDK bug, and so is any
+        // other answer the table does not name (500, 502, 504, 413, other
+        // 4xx): the server may have acted on part of it, so it is never
+        // retried.
         LogThrottled("refused", "the API refused a report (HTTP " + status + "); it was dropped");
         return Outcome.Dropped;
     }

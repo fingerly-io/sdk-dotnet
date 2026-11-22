@@ -33,7 +33,9 @@ public sealed class AgentsService
     /// <remarks>
     /// Never retried. A <c>429</c> carries <see cref="FingerlyApiException.RetryAfter"/>
     /// and <see cref="FingerlyApiException.RateLimitScope"/>; until then, serve
-    /// the requests as usual.
+    /// the requests as usual. An item the server could not use is answered
+    /// <see cref="VisitorKinds.Unknown"/> with ttl 0 in its own position, and
+    /// is neither classified nor counted; the others are answered as usual.
     /// </remarks>
     /// <param name="items">The requests, 1 to <see cref="MaxItems"/>.</param>
     /// <param name="cancellationToken">Cancels the call.</param>
@@ -41,7 +43,8 @@ public sealed class AgentsService
     /// <exception cref="ArgumentNullException"><paramref name="items"/> is null.</exception>
     /// <exception cref="ArgumentException"><paramref name="items"/> is empty or holds more than <see cref="MaxItems"/>. Nothing is sent.</exception>
     /// <exception cref="FingerlyApiException">
-    /// Any non-2xx response: <c>422 invalid_request</c> for a malformed item,
+    /// Any non-2xx response: <c>422 invalid_request</c> when no item in the
+    /// batch was usable,
     /// <c>429</c> over a rate or the daily allowance, <c>401</c>/<c>403</c>
     /// for a wrong or revoked key.
     /// </exception>

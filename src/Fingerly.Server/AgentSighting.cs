@@ -156,7 +156,11 @@ public sealed class AgentAnswer
 
     /// <summary>
     /// <c>human</c>, <c>ai_bot</c>, <c>automation</c> or
-    /// <c>search_crawler</c>; see <see cref="VisitorKinds"/>. The API can add
+    /// <c>search_crawler</c>; see <see cref="VisitorKinds"/>.
+    /// <see cref="VisitorKinds.Unknown"/> marks a request the server could not
+    /// use; its ttl is 0, so it is never remembered and
+    /// <see cref="AgentSightings.Lookup(ProxyRequest)"/> keeps answering
+    /// <see cref="Unknown"/>. The API can add
     /// values, so keep a default branch. Never null; empty for
     /// <see cref="Unknown"/> and for an answer that named no kind.
     /// </summary>

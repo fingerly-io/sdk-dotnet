@@ -693,6 +693,38 @@ public class AgentSightingsTest
     // ---- 6 failures -------------------------------------------------------
 
     [Fact]
+    public async Task AnItemTheServerCouldNotUseStaysUnknownAndTheRestAreStored()
+    {
+        const string Bot = "{\"ttl\":60,\"visitor_kind\":\"ai_bot\",\"agent\":\"GPTBot\"}";
+        await using TestApi api = await Scripted(async context =>
+        {
+            context.Response.ContentType = "application/json";
+            await context.Response.WriteAsync(
+                "{\"rules_version\":\"r1\",\"items\":[" + Bot
+                + ",{\"ttl\":0,\"visitor_kind\":\"unknown\"}," + Bot + "]}");
+        });
+        using var harness = new Harness(api.Origin);
+
+        harness.Sightings.Report(Request(ip: "203.0.113.1"), "text/html");
+        harness.Sightings.Report(Request(ip: "203.0.113.2"), "text/html");
+        harness.Sightings.Report(Request(ip: "203.0.113.3"), "text/html");
+        await harness.Sightings.FlushAsync();
+
+        Assert.Single(api.Requests);
+        Assert.Equal(
+            new[] { "203.0.113.1", "203.0.113.2", "203.0.113.3" },
+            Items(api.Requests[0]).Select(item => item.GetProperty("client_ip").GetString()));
+        Assert.Equal(VisitorKinds.AiBot, harness.Sightings.Lookup(Request(ip: "203.0.113.1")).VisitorKind);
+        Assert.Same(AgentAnswer.Unknown, harness.Sightings.Lookup(Request(ip: "203.0.113.2")));
+        Assert.Equal(VisitorKinds.AiBot, harness.Sightings.Lookup(Request(ip: "203.0.113.3")).VisitorKind);
+        Assert.Equal(2, harness.Sightings.CachedCount);
+        Assert.Equal(0, harness.Sightings.PendingCount);
+        Assert.Equal(0, harness.Sightings.DroppedCount);
+        Assert.Equal(0, harness.Sightings.PausedForMs);
+        Assert.Empty(harness.Logs);
+    }
+
+    [Fact]
     public async Task AnInvalidRequestIsDroppedAndLoggedOncePerMinute()
     {
         await using TestApi api = await Scripted(Status(422));

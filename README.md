@@ -236,7 +236,7 @@ they never collide with the properties they describe (or with
 | `SuspectLevels` | `Event.SuspectLevel` and `EventListOptions.Level` |
 | `Confidences` | `EventTrigger.Confidence` |
 | `EventStates`, `Environments`, `Platforms` | `Event.State`, `Event.Environment`, `Event.Platform` |
-| `AnonymityNetworks`, `DeviceKinds`, `VisitorKinds` | `Event.AnonymityNetwork`, `Event.DeviceKind`, `Event.VisitorKind` and `EventListOptions.Kind` |
+| `AnonymityNetworks`, `DeviceKinds`, `VisitorKinds` | `Event.AnonymityNetwork`, `Event.DeviceKind`, `Event.VisitorKind` and `EventListOptions.Kind`, and `AgentAnswer.VisitorKind` (only there `VisitorKinds.Unknown`) |
 | `AiPurposes`, `AiRuntimes` | `AiAgent.Purpose` (and `EventListOptions.AiPurpose`), `AiAgent.Runtime` |
 | `AiVerificationMethods`, `AiVerificationResults` | `AiVerification.Method`, `AiVerification.Result` |
 | `AttestationStates`, `AttestationStatuses`, `AttestSkippedReasons` | the archived document's `attestation.state`, `attestation.status` and `attestation.attest_skipped` |
@@ -633,7 +633,9 @@ its `VisitorKind` is empty, so it matches none of `VisitorKinds`): serve the
 request as usual. `VisitorKind` is never null, so it can be read without a
 check; `Agent` and `Ai` are null when the server named no agent.
 A signed request is checked on every report, so its answer is never
-remembered. `answer.Ai.Verification` says how far the agent's name was
+remembered. Neither is the answer for a request the server could not use
+(`VisitorKinds.Unknown`, ttl 0), so that request stays `AgentAnswer.Unknown`
+while the rest of its batch is answered as usual. `answer.Ai.Verification` says how far the agent's name was
 checked: a `Pass` means the operator's key or published ranges confirmed it, a
 `Fail` means the name was borrowed, and `NotAttempted` leaves it the client's
 claim.
@@ -653,7 +655,8 @@ What happens behind it:
 - **Fail open.** A refused or failed report never reaches a visitor. A rate
   limit pauses reporting until `Retry-After`, for at most 24 hours; a wrong or revoked key drops the
   batch and pauses for a minute; a `503` or an API that cannot be reached is
-  retried with backoff from 1 to 60 seconds; any other refusal, and a report
+  retried with backoff from 1 to 60 seconds; a `422` (no item in the batch
+  was usable), any other refusal, and a report
   that timed out after it was sent, is dropped, so nothing is counted twice.
   Each is logged at most once a minute through `ILogger`, and so is a
   `ClientIp` that gave no single address.
