@@ -333,7 +333,7 @@ public sealed class Event
     public IReadOnlyList<EventTrigger> Triggers
     {
         get => _triggers ?? Array.Empty<EventTrigger>();
-        init => _triggers = value;
+        init => _triggers = Json.WithoutNulls(value);
     }
 
     /// <summary>Whether the full submission was archived.</summary>
@@ -397,7 +397,7 @@ public sealed class EventPage
     public IReadOnlyList<Event> Rows
     {
         get => _rows ?? Array.Empty<Event>();
-        init => _rows = value;
+        init => _rows = Json.WithoutNulls(value);
     }
 
     /// <summary>The one-based page number returned.</summary>

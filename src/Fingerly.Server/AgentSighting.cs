@@ -68,16 +68,54 @@ public sealed class AgentSighting
 /// </summary>
 public sealed class AgentSightingsResult
 {
+    private readonly string? _rulesVersion;
+    private readonly IReadOnlyList<AgentAnswer>? _items;
+
     /// <summary>
     /// Names the classification rules. When it changes, every remembered
-    /// answer is out of date.
+    /// answer is out of date. Never null; empty when the answer named none.
     /// </summary>
     [JsonPropertyName("rules_version")]
-    public string RulesVersion { get; init; } = string.Empty;
+    public string RulesVersion
+    {
+        get => _rulesVersion ?? string.Empty;
+        init => _rulesVersion = value;
+    }
 
-    /// <summary>One answer per reported request, in the same order.</summary>
+    /// <summary>
+    /// One answer per reported request, in the same order. Never null, and
+    /// never holds null: an answer the API sent as <c>null</c> reads as
+    /// <see cref="AgentAnswer.Unknown"/>, so the positions still line up.
+    /// </summary>
     [JsonPropertyName("items")]
-    public IReadOnlyList<AgentAnswer> Items { get; init; } = [];
+    public IReadOnlyList<AgentAnswer> Items
+    {
+        get => _items ?? [];
+        init => _items = WithoutNulls(value);
+    }
+
+    /// <summary>The list with every null replaced by <see cref="AgentAnswer.Unknown"/>.</summary>
+    private static IReadOnlyList<AgentAnswer>? WithoutNulls(IReadOnlyList<AgentAnswer>? items)
+    {
+        if (items is null)
+        {
+            return null;
+        }
+        for (int i = 0; i < items.Count; i++)
+        {
+            if (items[i] is null)
+            {
+                var copy = new AgentAnswer[items.Count];
+                for (int j = 0; j < copy.Length; j++)
+                {
+                    // The binder puts a JSON null here whatever the annotation says.
+                    copy[j] = (AgentAnswer?)items[j] ?? AgentAnswer.Unknown;
+                }
+                return copy;
+            }
+        }
+        return items;
+    }
 }
 
 /// <summary>
@@ -106,6 +144,8 @@ public sealed class AgentAnswer
     /// </summary>
     public static readonly AgentAnswer Unknown = new();
 
+    private readonly string? _visitorKind;
+
     /// <summary>
     /// The seconds this answer may be reused for the same user agent, address
     /// and <c>Signature-Agent</c>; 0 for a signed request, which is checked
@@ -117,10 +157,15 @@ public sealed class AgentAnswer
     /// <summary>
     /// <c>human</c>, <c>ai_bot</c>, <c>automation</c> or
     /// <c>search_crawler</c>; see <see cref="VisitorKinds"/>. The API can add
-    /// values, so keep a default branch.
+    /// values, so keep a default branch. Never null; empty for
+    /// <see cref="Unknown"/> and for an answer that named no kind.
     /// </summary>
     [JsonPropertyName("visitor_kind")]
-    public string VisitorKind { get; init; } = string.Empty;
+    public string VisitorKind
+    {
+        get => _visitorKind ?? string.Empty;
+        init => _visitorKind = value;
+    }
 
     /// <summary>The agent's name where the server knows it, such as <c>GPTBot</c> or <c>Googlebot</c>; null for a person's browser.</summary>
     [JsonPropertyName("agent")]

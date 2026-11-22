@@ -1051,6 +1051,28 @@ public class AgentSightingsTest
         Assert.Single(harness.Logs);
     }
 
+    [Theory]
+    [InlineData("""{"rules_version":null,"items":[{"ttl":60,"visitor_kind":null,"agent":null,"ai":null}]}""", true)]
+    [InlineData("""{"items":[{"ttl":60}]}""", true)]
+    [InlineData("""{"rules_version":"r1","items":[null]}""", false)]
+    [InlineData("""{"rules_version":"r1","items":null}""", false)]
+    public async Task NullsInAnAnswerNeverThrowAndNeverReachTheApplication(string body, bool remembered)
+    {
+        await using TestApi api = await TestApi.RespondAsync(200, body);
+        using var harness = new Harness(api.Origin);
+        harness.Sightings.Report(Request(), "text/html");
+
+        // FlushAsync throws nothing but the caller's cancellation.
+        await harness.Sightings.FlushAsync();
+
+        Assert.Equal(0, harness.Sightings.PendingCount);
+        Assert.Equal(remembered ? 1 : 0, harness.Sightings.CachedCount);
+        AgentAnswer answer = harness.Sightings.Lookup(Request());
+        Assert.Equal(!remembered, answer.IsUnknown);
+        // What the application reads without a check is never null.
+        Assert.Equal("", answer.VisitorKind);
+    }
+
     // ---- 3 fields ---------------------------------------------------------
 
     [Fact]

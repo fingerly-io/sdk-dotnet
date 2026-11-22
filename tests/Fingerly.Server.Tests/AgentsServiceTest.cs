@@ -165,6 +165,36 @@ public class AgentsServiceTest
         Assert.Empty(api.Requests);
     }
 
+    [Theory]
+    [InlineData("""{"rules_version":null,"items":[{"ttl":60,"visitor_kind":null,"agent":null,"ai":null},null]}""")]
+    [InlineData("""{"items":[{},null]}""")]
+    [InlineData("""{"rules_version":"r1","items":null}""")]
+    [InlineData("""{}""")]
+    public async Task NullsReadAsTheTypesPromise(string body)
+    {
+        // A null or missing value must never reach a member declared non-null,
+        // where the application would read it without a check.
+        await using TestApi api = await TestApi.RespondAsync(200, body);
+        using FingerlyClient fingerly = Client(api);
+
+        AgentSightingsResult result = await fingerly.Agents.ReportSightingsAsync(
+            [new AgentSighting { ClientIp = "203.0.113.7" }, new AgentSighting { ClientIp = "203.0.113.8" }]);
+
+        Assert.NotNull(result.RulesVersion);
+        Assert.NotNull(result.Items);
+        foreach (AgentAnswer answer in result.Items)
+        {
+            Assert.NotNull(answer);
+            Assert.NotNull(answer.VisitorKind);
+        }
+        if (result.Items.Count == 2)
+        {
+            // A null answer keeps its position, as Unknown.
+            Assert.Equal("", result.Items[0].VisitorKind);
+            Assert.Same(AgentAnswer.Unknown, result.Items[1]);
+        }
+    }
+
     [Fact]
     public void UnknownMatchesNoVisitorKind()
     {

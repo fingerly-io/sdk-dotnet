@@ -53,6 +53,23 @@ public class EventsServiceTest
     }
 
     [Fact]
+    public async Task NullListEntriesNeverReachTheApplication()
+    {
+        // Rows and Triggers are declared as holding no null; a JSON null
+        // entry is dropped rather than handed to a loop that reads it.
+        await using TestApi api = await TestApi.RespondAsync(
+            200,
+            """{"rows":[null,{"request_id":"r1","occurred_at":"2026-01-02T03:04:05Z","triggers":[null,{"signal":"vpn","weight":10},null]}],"page":1,"page_size":2}""");
+        using FingerlyClient fingerly = Client(api);
+
+        EventPage page = await fingerly.Events.ListAsync();
+
+        Event row = Assert.Single(page.Rows);
+        EventTrigger trigger = Assert.Single(row.Triggers);
+        Assert.Equal(10, trigger.Weight);
+    }
+
+    [Fact]
     public async Task EscapesARequestIdIntoOnePathSegment()
     {
         await using TestApi api = await TestApi.RespondAsync(200, EventJson);

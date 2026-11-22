@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Text.Json.Serialization.Metadata;
@@ -74,6 +75,37 @@ internal sealed class ApiError
 
 internal static class Json
 {
+    /// <summary>
+    /// The list without its null entries, for a list property declared as
+    /// holding none: the binder stores a JSON <c>null</c> entry whatever the
+    /// annotation says. Allocates only when there is one to drop.
+    /// </summary>
+    internal static IReadOnlyList<T>? WithoutNulls<T>(IReadOnlyList<T>? items)
+        where T : class
+    {
+        if (items is null)
+        {
+            return null;
+        }
+        for (int i = 0; i < items.Count; i++)
+        {
+            if (items[i] is null)
+            {
+                var kept = new List<T>(items.Count - 1);
+                for (int j = 0; j < items.Count; j++)
+                {
+                    T? item = items[j];
+                    if (item is not null)
+                    {
+                        kept.Add(item);
+                    }
+                }
+                return kept;
+            }
+        }
+        return items;
+    }
+
     /// <summary>
     /// Parses a response body into a standalone tree.
     /// </summary>
