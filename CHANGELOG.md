@@ -1,5 +1,45 @@
 # Changelog
 
+## 0.5.0
+
+- `Event.Ai` (`AiAgent`, with `AiVerification`) describes the AI agent behind
+  an event whose `VisitorKind` is `ai_bot`: its name, operator, purpose,
+  runtime, whether it named itself, and how far that name was checked. New
+  named values: `AiPurposes`, `AiRuntimes`, `AiVerificationMethods` and
+  `AiVerificationResults`.
+- `EventListOptions` filters the list by `Kind`, `AiProvider` and `AiPurpose`.
+- `Signals.AiSpoofed` and `Signals.IdentityObfuscated` name the two new
+  signals; `Signals.VpnTimezone` is gone, as the server no longer sends it.
+- The proxy forwards the Web Bot Auth headers (`Signature`, `Signature-Input`
+  and `Signature-Agent`) when they are header-safe and at most 4096 bytes.
+- `fingerly.Agents.ReportSightingsAsync` reports up to 200 requests your
+  server served and answers what sent each one, so AI crawlers that never run
+  a page's JavaScript are seen. `FingerlyApiException.RateLimitScope` (see
+  `RateLimitScopes`) says which limit refused a `429`.
+- `AgentSightings` batches those reports in the background and remembers the
+  answers, so `Lookup` tells your code what sent a request without waiting on
+  the network. It never delays or fails a request: memory is bounded, every
+  failure fails open, a rate limit pauses reporting for at most 24 hours
+  whatever `Retry-After` says, and disposing it sends what is pending within 5
+  seconds.
+  Under ASP.NET Core, `AddFingerlyAgentSightings`, `UseFingerlyAgentSightings`
+  and `sightings.Lookup(context)` wire it up. The path rules match the path
+  within the application, also under `UsePathBase` and `Map`. A request
+  whose method is over 4096 UTF-8 bytes is not reported, and a `Host` over
+  4096 bytes is left out, so every field of a report is bounded.
+- `VisitorKinds.Unknown` names the answer for a reported request the server
+  could not use. It comes with ttl 0, so it is never remembered and that
+  request stays `AgentAnswer.Unknown`; the rest of the batch is answered as
+  usual. A `422` now means no item in the batch was usable.
+- A `null` or missing value in an answer never reaches a member declared
+  non-null: `AgentSightingsResult.RulesVersion`, `AgentSightingsResult.Items`
+  and `AgentAnswer.VisitorKind` read as empty, a `null` answer reads as
+  `AgentAnswer.Unknown` in its position, and a `null` entry in
+  `EventPage.Rows` or `Event.Triggers` is left out.
+- The README and `DeviceCheckService` describe one read and one write token
+  per identification: a check-then-mark flow reads and writes on the same
+  request id.
+
 ## 0.4.1
 
 - Each `AttestSkippedReasons` constant describes when the SDK reports that
